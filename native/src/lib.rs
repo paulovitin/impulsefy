@@ -61,6 +61,10 @@ enum Command {
         access_token: String,
         credential: String,
         device_id: String,
+        #[serde(default)]
+        playback_oauth: bool,
+        #[serde(default)]
+        username: String,
     },
     Load {
         uris: Vec<String>,
@@ -82,6 +86,8 @@ struct Login {
     access_token: String,
     credential: String,
     device_id: String,
+    playback_oauth: bool,
+    username: String,
 }
 
 struct Bridge {
@@ -218,7 +224,9 @@ async fn playback_credentials(
     bridge: &Bridge,
 ) -> Result<Credentials, String> {
     let credential = credentials(login)?;
-    if credential.auth_type == AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS {
+    if login.playback_oauth
+        || credential.auth_type == AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS
+    {
         return Ok(credential);
     }
 
@@ -241,7 +249,9 @@ async fn playback_credentials(
         .name("Impulsefy")
         .device_type(DeviceType::Automobile)
         .launch()
-        .map_err(|_| "Não foi possível anunciar o carro no Spotify. Verifique o Wi-Fi e tente novamente.")?;
+        .map_err(|_| {
+            "Não foi possível anunciar o carro no Spotify. Verifique o Wi-Fi e tente novamente."
+        })?;
     let mut waiting = State {
         loading: true,
         device_id: login.device_id.clone(),
@@ -285,6 +295,11 @@ async fn connect(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, String> {
 
 async fn connect_once(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, String> {
     let config = SessionConfig {
+        client_id: if login.playback_oauth {
+            "65b708073fc0480ea92a077233ca87bd".into()
+        } else {
+            SessionConfig::default().client_id
+        },
         device_id: login.device_id.clone(),
         tmp_dir: bridge.tmp_dir.clone(),
         autoplay: Some(false),
@@ -334,13 +349,22 @@ async fn connect_once(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, Stri
         _ = async { while !bridge.closed.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(100)).await; } } => Err("Player encerrado".into()),
     };
     match result {
-        Ok((spirc, task)) => Ok(Engine {
-            session,
-            player,
-            spirc,
-            task: tokio::spawn(task),
-            events,
-        }),
+        Ok((spirc, task)) => {
+            if login.playback_oauth
+                && (login.username.is_empty() || session.username() != login.username)
+            {
+                session.shutdown();
+                player.stop();
+                return Err("As autorizações usam contas diferentes. Entre novamente com a mesma conta Spotify nas duas etapas.".into());
+            }
+            Ok(Engine {
+                session,
+                player,
+                spirc,
+                task: tokio::spawn(task),
+                events,
+            })
+        }
         Err(error) => {
             player.stop();
             session.shutdown();
@@ -486,11 +510,11 @@ async fn run(bridge: Arc<Bridge>, mut commands: mpsc::UnboundedReceiver<Command>
                 let Some(command) = command else { break };
                 match command {
                     Command::Shutdown => break,
-                    Command::Connect { access_token, credential, device_id } => {
+                    Command::Connect { access_token, credential, device_id, playback_oauth, username } => {
                         engine.take(); current_request = None; retry_at = None; retry_count = 0;
                         state = State { device_id: device_id.clone(), loading: true, ..State::default() };
                         queue.clear(); bridge.publish(&state);
-                        login = Some(Login { access_token, credential, device_id });
+                        login = Some(Login { access_token, credential, device_id, playback_oauth, username });
                         match connect(login.as_ref().unwrap(), bridge.clone()).await {
                             Ok(next) => {
                                 let saved = Credentials { username: Some(next.session.username()), auth_type: AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS, auth_data: next.session.auth_data() };
@@ -832,6 +856,8 @@ mod tests {
         let login = Login {
             access_token: "test-token".into(),
             credential: "not-json".into(),
+            playback_oauth: false,
+            username: String::new(),
             device_id: "test".into(),
         };
         assert_eq!(

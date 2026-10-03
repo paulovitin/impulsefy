@@ -107,7 +107,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
         onMain(() -> { listener = next; if (next != null) { JSONObject value = snapshot(); if (pendingCredential != null) { put(value, "credential", pendingCredential); pendingCredential = null; } next.onPlayerState(value); } });
     }
 
-    public void connect(String accessToken, String credentialJson, String deviceId) {
+    public void connect(String accessToken, String credentialJson, String deviceId, boolean playbackOAuth, String username) {
         onMain(() -> {
             if (destroyed) return;
             startService(new Intent(this, PlayerService.class));
@@ -133,6 +133,8 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
                 put(command, "access_token", accessToken == null ? "" : accessToken);
                 put(command, "credential", credentialJson == null ? "" : credentialJson);
                 put(command, "device_id", deviceId == null ? "" : deviceId);
+                put(command, "playback_oauth", playbackOAuth);
+                put(command, "username", username == null ? "" : username);
                 send(command);
             } catch (RuntimeException | LinkageError failure) {
                 player = null;

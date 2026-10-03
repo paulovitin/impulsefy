@@ -28,36 +28,36 @@ um APK otimizado sem assinatura, para assinatura com sua própria chave.
 1. Publique a ponte seguindo [server/README.md](server/README.md).
 2. Inclua seu endereço HTTPS no build acima, ou informe-o uma vez em
    **Endereço de conexão** no aplicativo.
-3. Toque em conectar, leia o QR no celular, confira o código e autorize no Spotify.
-4. Para autorizar o áudio na primeira vez, conecte celular e carro à mesma rede
-   Wi-Fi. No Spotify do celular, usando a mesma conta, abra **Dispositivos** e
-   selecione **Impulsefy**. O aplicativo aguarda essa seleção por cinco minutos;
-   para tentar novamente, toque em reproduzir no carro.
-5. O carro salva as autorizações da biblioteca e do áudio para os próximos usos.
+3. Toque em conectar, leia o QR no celular e confira o código.
+4. Entre no Spotify pela sessão temporária exibida no celular. Autorize biblioteca
+   e áudio com a mesma conta; são dois consentimentos dentro do mesmo navegador.
+5. O carro troca os códigos por tokens e salva as autorizações no Android Keystore.
+   Nos próximos usos, reutiliza a sessão salva.
 
-A senha é digitada apenas no Spotify. O verificador PKCE e os tokens permanecem
-no carro; a ponte transporta somente o código temporário e o descarta após a
-entrega. As credenciais persistentes usam AES-GCM com chave no Android Keystore.
+O usuário não precisa criar um aplicativo no Spotify Developer Dashboard. Como no
+[Spotifast](https://github.com/crmne/spotifast/blob/main/src/auth.rs), a biblioteca usa
+um Client ID público compartilhado e o áudio usa uma autorização separada de
+reprodução. O aplicativo compartilhado tem cota global e depende da disponibilidade
+desses clientes no Spotify; isso não garante acesso ilimitado para qualquer conta.
+É necessário Spotify Premium para reproduzir pelo librespot.
 
-O login segue a estratégia Authorization Code + PKCE S256 do
-[Spotifast](https://github.com/crmne/spotifast/blob/main/src/auth.rs).
-O callback loopback do desktop não funciona entre celular e carro: ele voltaria
-ao próprio celular. A ponte adapta esse retorno para dois dispositivos e exige
-um Client ID próprio com o callback HTTPS cadastrado. Nenhum client secret é
-necessário. O login por QR só precisa de acesso à internet. A autorização inicial
-do áudio usa Spotify Connect na rede local; depois disso, o carro reutiliza a
-credencial salva e reproduz diretamente pela internet.
+O callback loopback do desktop voltaria ao próprio celular. Para recebê-lo, a ponte
+abre um Chromium temporário no servidor e transmite sua tela e os comandos do usuário
+por HTTPS/WebSocket. O celular controla a página real do Spotify nesse navegador.
+A digitação passa pelo servidor; confie no operador do endereço configurado. Senhas,
+cookies, telas e teclas não são registrados pelo serviço. O processo e o perfil
+temporário são descartados ao terminar, cancelar ou expirar o QR.
 
-O token OAuth da biblioteca não é usado como autorização de áudio no login5:
-esse fluxo rejeita tokens de apps próprios com `INVALID_CREDENTIALS` ou
-`BAD_REQUEST`. A autorização recebida pelo Spotify Connect precisa corresponder
-à conta verificada pelo OAuth; uma conta diferente é recusada. O anúncio local
-é encerrado após a seleção, ao cancelar ou quando o prazo expira.
+Os dois verificadores PKCE ficam somente na memória do carro. A ponte entrega os
+códigos uma única vez a quem possui o segredo de consulta; a troca e a renovação dos
+tokens OAuth acontecem diretamente entre Android e Spotify. Os tokens e a credencial
+de reprodução persistem criptografados com AES-GCM e chave no Android Keystore.
+A conta do áudio precisa coincidir com a conta da biblioteca.
 
-É necessário Spotify Premium para reprodução pelo librespot. Apps Spotify em
-Development Mode também exigem Premium do proprietário e têm limites de
-usuários e de acesso a playlists. Consulte as
-[regras atuais de Development Mode](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
+Celular e carro precisam de internet, mas podem usar redes diferentes. As sessões
+antigas continuam compatíveis: um relay sem `BROWSER_LOGIN=1` usa o Client ID do
+operador com callback HTTPS e a primeira autorização de áudio via Spotify Connect
+na mesma rede Wi-Fi. Esse caminho continua disponível para instalações existentes.
 
 ## Escopo
 
@@ -79,7 +79,9 @@ Estado das verificações e limites de validação: [tasks/todo.md](tasks/todo.m
 ## Verificar
 
 ```sh
-node --test server/relay.test.mjs
+npm --prefix server ci
+npm --prefix server exec -- playwright install --only-shell chromium
+npm --prefix server test
 cargo test --manifest-path native/Cargo.toml --locked
 cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -- -D warnings
 ANDROID_SERIAL=emulator-5554 ./scripts/test-android.sh

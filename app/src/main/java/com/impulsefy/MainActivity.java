@@ -600,11 +600,12 @@ public final class MainActivity extends Activity {
         AuthManager owner = auth; int session = sessionGeneration;
         network.execute(() -> {
             try {
-                String token = owner.accessToken(); String credential = owner.playbackCredential();
+                String token = owner.playbackAccessToken(); String credential = owner.playbackCredential();
+                boolean playbackOAuth = owner.usesPlaybackOAuth(); String username = owner.playbackUsername();
                 main.post(() -> {
                     if (destroyed || demo || !mainScreen || !premiumAllowed || owner != auth || session != sessionGeneration || service != player) return;
                     if (!owner.isSignedIn()) { sessionExpired(); return; }
-                    service.connect(token, credential, device);
+                    service.connect(token, credential, device, playbackOAuth, username);
                 });
             } catch (Exception error) {
                 main.post(() -> {

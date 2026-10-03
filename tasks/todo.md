@@ -70,3 +70,25 @@ Validação no carro em 2026-10-03:
   avisos e build ARM64/ARMv7 com R8 e lint release passaram.
 - A reconexão após reiniciar o app e a renovação por expiração ainda não foram
   verificadas ao vivo após essa correção; a reprodução em andamento foi preservada.
+
+## Login compartilhado com navegador temporário (2026-10-03)
+
+- [x] Mesmos dois clientes públicos usados pelo Spotifast, sem Client ID por usuário.
+- [x] Navegador Chromium efêmero no servidor, controlado pelo celular via HTTPS/WS.
+- [x] Dois verificadores PKCE no Android; códigos consumidos uma vez; tokens separados
+      para biblioteca/áudio, criptografados em um registro, com renovação independente.
+- [x] Librespot usa a identidade de reprodução e recusa divergência entre contas.
+- [x] Preservada compatibilidade com OAuth antigo e credenciais Spotify Connect.
+- [x] Doze testes Node/Chromium locais e no Docker restrito, cinco testes Rust, Clippy,
+      build ARM64/ARMv7, R8/lint e testes Android API 28 passaram.
+- [x] Deploy na mesma porta 8787; tela oficial Spotify validada por HTTPS/WS público.
+- [x] APK instalado no carro sem desinstalação; sessão antiga restaurou a biblioteca.
+      Depois foi encerrada pela interface para validar o novo fluxo do zero.
+- [ ] Usuário concluir as duas autorizações reais e confirmar biblioteca/reprodução.
+- [ ] Reiniciar o app e verificar reprodução com a nova sessão persistida.
+- [ ] Renovação automática por expiração ainda não verificada ao vivo.
+
+A digitação do navegador remoto passa pelo servidor. A confirmação no celular
+informa isso; senhas/cookies não são registrados. O processo efêmero usa sandbox,
+capabilities removidas, seccomp e tmpfs. Não há persistência de sessão no servidor.
+O cliente compartilhado continua dependendo de sua cota/disponibilidade no Spotify.

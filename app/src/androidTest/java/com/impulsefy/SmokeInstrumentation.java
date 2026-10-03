@@ -33,6 +33,7 @@ public final class SmokeInstrumentation extends Instrumentation {
         AuthManager auth = null;
         try {
             verifyRelayConfigurationError();
+            verifySeparatePlaybackGrant();
             System.loadLibrary("impulsefy");
             CountDownLatch nativeReply = new CountDownLatch(1);
             AtomicReference<String> audioError = new AtomicReference<>();
@@ -149,7 +150,7 @@ public final class SmokeInstrumentation extends Instrumentation {
             require(rejected, "signed-out session accepted a late playback credential");
             auth.logout();
             require(auth.playbackCredential() == null, "logout retained credential");
-            result.putString("stream", "\nPASS: Android navigation, Rust JNI roundtrip, PCM AudioTrack lifecycle and failed-output recovery, focus gain while loading, rendered QR decode, S256, phone consent denial, encrypted persistence, signed-out write protection and relay configuration errors.\n");
+            result.putString("stream", "\nPASS: Android navigation, Rust JNI roundtrip, PCM AudioTrack lifecycle and failed-output recovery, focus gain while loading, rendered QR decode, S256, phone consent denial, encrypted persistence, separate playback grant restoration, signed-out write protection and relay configuration errors.\n");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable failure) {
             result.putString("stream", "\nFAIL: " + android.util.Log.getStackTraceString(failure));
@@ -158,6 +159,28 @@ public final class SmokeInstrumentation extends Instrumentation {
             getTargetContext().getSharedPreferences("impulsefy_ui", 0).edit().remove("relay").commit();
             if (auth != null) auth.close();
             if (activity != null) { Activity screen = activity; runOnMainSync(screen::finish); }
+        }
+    }
+
+    private void verifySeparatePlaybackGrant() throws Exception {
+        SecureStore secure = new SecureStore(getTargetContext());
+        JSONObject web = new JSONObject().put("client_id", AuthManager.WEB_CLIENT_ID).put("access_token", "web-only")
+                .put("refresh_token", "web-refresh").put("expires_at", System.currentTimeMillis() + 600_000);
+        JSONObject audio = new JSONObject().put("client_id", AuthManager.PLAYBACK_CLIENT_ID).put("access_token", "audio-only")
+                .put("refresh_token", "audio-refresh").put("expires_at", System.currentTimeMillis() + 600_000).put("username", "same-account");
+        secure.put("spotify_oauth", web.put("playback", audio).toString());
+        try (AuthManager restored = new AuthManager(getTargetContext(), "http://127.0.0.1:8787")) {
+            require(restored.usesPlaybackOAuth(), "separate playback grant lost on restart");
+            require("web-only".equals(restored.accessToken()), "Web API received playback token");
+            require("audio-only".equals(restored.playbackAccessToken()), "player received Web API token");
+            require("same-account".equals(restored.playbackUsername()), "playback account binding lost");
+            restored.logout();
+        }
+        web.remove("playback"); secure.put("spotify_oauth", web.toString());
+        try (AuthManager legacy = new AuthManager(getTargetContext(), "http://127.0.0.1:8787")) {
+            require(!legacy.usesPlaybackOAuth(), "legacy session incorrectly migrated");
+            require("web-only".equals(legacy.playbackAccessToken()), "legacy Connect grant broken");
+            legacy.logout();
         }
     }
 
