@@ -76,5 +76,6 @@ ANDROID_SERIAL=emulator-5554 ./scripts/test-android.sh
 Use um emulador de teste sem uma conta conectada e deixe a porta local 8787
 livre. O teste Android percorre a prévia, decodifica o QR efetivamente renderizado,
 confere PKCE e cancelamento pelo celular, exercita o Keystore, chama Rust via JNI
-e escreve PCM silencioso no AudioTrack. Os testes de OAuth usam uma autoridade
+e escreve PCM silencioso no AudioTrack, incluindo recuperação de saída inválida
+e restauração de volume após interrupção. Os testes de OAuth usam uma autoridade
 local simulada; não substituem a validação com uma conta Spotify real.
