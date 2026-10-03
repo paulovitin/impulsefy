@@ -34,10 +34,11 @@ public final class SmokeInstrumentation extends Instrumentation {
         try {
             System.loadLibrary("impulsefy");
             CountDownLatch nativeReply = new CountDownLatch(1);
+            AtomicReference<String> audioError = new AtomicReference<>();
             try (NativePlayer output = new NativePlayer(getTargetContext(), new NativePlayer.Callback() {
                 public void onState(JSONObject state) { if (!state.optBoolean("connected") && !state.optString("error").isEmpty()) nativeReply.countDown(); }
                 public boolean requestAudioFocus() { return true; }
-                public void onAudioError(String message) { throw new AssertionError(message); }
+                public void onAudioError(String message) { audioError.set(message); }
             })) {
                 output.command(new JSONObject().put("command", "pause"));
                 require(nativeReply.await(10, TimeUnit.SECONDS), "Rust -> Java state callback failed");
@@ -51,7 +52,24 @@ public final class SmokeInstrumentation extends Instrumentation {
                 require((Boolean) stop.invoke(output), "AudioTrack pause/flush failed");
                 require((Boolean) start.invoke(output), "AudioTrack resume failed");
                 require((Boolean) stop.invoke(output), "AudioTrack second stop failed");
+                waitForIdleSync();
+                require(audioError.get() == null, "unexpected audio error: " + audioError.get());
+                // Simulate the platform invalidating its output. A failed write must
+                // retire that object so the next user retry creates a working track.
+                java.lang.reflect.Field audioField = NativePlayer.class.getDeclaredField("audio");
+                audioField.setAccessible(true);
+                android.media.AudioTrack failed = (android.media.AudioTrack) audioField.get(output);
+                failed.release();
+                require(!(Boolean) write.invoke(output, (Object) new short[4096]), "invalid output accepted PCM");
+                require(audioField.get(output) == null, "failed AudioTrack retained for retry");
+                waitForIdleSync();
+                require(audioError.getAndSet(null) != null, "output failure was not reported");
+                require((Boolean) start.invoke(output), "AudioTrack recreation failed");
+                require(audioField.get(output) != failed, "retry reused the failed AudioTrack");
+                require((Boolean) write.invoke(output, (Object) new short[4096]), "recreated AudioTrack rejected PCM");
+                require((Boolean) stop.invoke(output), "recreated AudioTrack did not stop");
             }
+            verifyFocusGainWhileLoading();
             activity = startActivitySync(new Intent(getTargetContext(), MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("demo", true));
             waitForIdleSync();
@@ -130,7 +148,7 @@ public final class SmokeInstrumentation extends Instrumentation {
             require(rejected, "signed-out session accepted a late playback credential");
             auth.logout();
             require(auth.playbackCredential() == null, "logout retained credential");
-            result.putString("stream", "\nPASS: Android navigation, Rust JNI roundtrip, PCM AudioTrack start/write/pause/resume, rendered QR decode, S256, phone consent denial, encrypted persistence and signed-out write protection.\n");
+            result.putString("stream", "\nPASS: Android navigation, Rust JNI roundtrip, PCM AudioTrack lifecycle and failed-output recovery, focus gain while loading, rendered QR decode, S256, phone consent denial, encrypted persistence and signed-out write protection.\n");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable failure) {
             result.putString("stream", "\nFAIL: " + android.util.Log.getStackTraceString(failure));
@@ -139,6 +157,45 @@ public final class SmokeInstrumentation extends Instrumentation {
             getTargetContext().getSharedPreferences("impulsefy_ui", 0).edit().remove("relay").commit();
             if (auth != null) auth.close();
             if (activity != null) { Activity screen = activity; runOnMainSync(screen::finish); }
+        }
+    }
+
+    private void verifyFocusGainWhileLoading() throws Exception {
+        AtomicReference<PlayerService> bound = new AtomicReference<>();
+        CountDownLatch ready = new CountDownLatch(1);
+        android.content.ServiceConnection connection = new android.content.ServiceConnection() {
+            public void onServiceConnected(android.content.ComponentName name, android.os.IBinder binder) {
+                bound.set(((PlayerService.LocalBinder) binder).getService()); ready.countDown();
+            }
+            public void onServiceDisconnected(android.content.ComponentName name) { }
+        };
+        require(getTargetContext().bindService(new Intent(getTargetContext(), PlayerService.class), connection, android.content.Context.BIND_AUTO_CREATE), "player service bind failed");
+        try {
+            require(ready.await(10, TimeUnit.SECONDS), "player service bind timed out");
+            PlayerService service = bound.get();
+            java.lang.reflect.Field playerField = PlayerService.class.getDeclaredField("player");
+            java.lang.reflect.Field volumeField = NativePlayer.class.getDeclaredField("volume");
+            java.lang.reflect.Method publish = PlayerService.class.getDeclaredMethod("publish", JSONObject.class);
+            playerField.setAccessible(true); volumeField.setAccessible(true); publish.setAccessible(true);
+            try (NativePlayer output = new NativePlayer(getTargetContext(), new NativePlayer.Callback() {
+                public void onState(JSONObject state) { }
+                public boolean requestAudioFocus() { return true; }
+                public void onAudioError(String message) { }
+            })) {
+                playerField.set(service, output);
+                runOnMainSync(() -> service.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK));
+                require(volumeField.getFloat(output) == 0.2f, "duck did not reduce output volume");
+                JSONObject loading = service.snapshot().put("playing", false).put("loading", true);
+                runOnMainSync(() -> {
+                    try { publish.invoke(service, loading); }
+                    catch (Exception error) { throw new RuntimeException(error); }
+                    service.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_GAIN);
+                });
+                require(volumeField.getFloat(output) == 1f, "focus gain while loading left output ducked");
+            }
+        } finally {
+            if (bound.get() != null) runOnMainSync(() -> bound.get().logout());
+            getTargetContext().unbindService(connection);
         }
     }
 

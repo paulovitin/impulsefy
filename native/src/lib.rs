@@ -361,7 +361,10 @@ fn apply_event(state: &mut State, current_request: &mut Option<u64>, event: Play
             state.loading = false;
             state.position_ms = position_ms;
         }
-        PlayerEvent::Stopped { .. } | PlayerEvent::EndOfTrack { .. } => {
+        // Gapless EndOfTrack is a transition, not a stopped sink. Spirc emits
+        // Loading/Playing next, or Stopped when the queue is exhausted.
+        PlayerEvent::EndOfTrack { .. } => return false,
+        PlayerEvent::Stopped { .. } => {
             state.playing = false;
             state.loading = false;
         }
@@ -388,9 +391,13 @@ fn apply_event(state: &mut State, current_request: &mut Option<u64>, event: Play
                 .map(|c| c.url.clone())
                 .unwrap_or_default();
         }
-        PlayerEvent::Unavailable { .. } => {
-            state.loading = false;
-            state.playing = false;
+        PlayerEvent::Unavailable { track_id, .. } => {
+            // A failed preload carries the current request ID but the NEXT URI.
+            // It must not interrupt the current track or release Android focus.
+            if track_id.to_uri().unwrap_or_default() != state.uri {
+                return false;
+            }
+            // Spirc skips unavailable tracks, then reports Loading or Stopped.
             state.error = "Não foi possível reproduzir este item. Ele pode estar indisponível para esta conta ou região; é necessário ter Spotify Premium.".into();
         }
         _ => return false,
@@ -676,6 +683,69 @@ mod tests {
         );
         assert!(!state.playing);
         assert_eq!(state.position_ms, 2200);
+    }
+    #[test]
+    fn gapless_transitions_and_failed_preloads_keep_audio_active_until_stopped() {
+        let mut state = State {
+            connected: true,
+            playing: true,
+            uri: A.into(),
+            ..State::default()
+        };
+        let mut request = Some(1);
+        let track = SpotifyUri::from_uri(A).unwrap();
+        let next = SpotifyUri::from_uri(B).unwrap();
+        assert!(!apply_event(
+            &mut state,
+            &mut request,
+            PlayerEvent::Unavailable {
+                play_request_id: 1,
+                track_id: next.clone(),
+            }
+        ));
+        assert!(state.playing && state.error.is_empty());
+        assert!(!apply_event(
+            &mut state,
+            &mut request,
+            PlayerEvent::EndOfTrack {
+                play_request_id: 1,
+                track_id: track,
+            }
+        ));
+        assert!(state.playing);
+        apply_event(
+            &mut state,
+            &mut request,
+            PlayerEvent::PlayRequestIdChanged { play_request_id: 2 },
+        );
+        apply_event(
+            &mut state,
+            &mut request,
+            PlayerEvent::Loading {
+                play_request_id: 2,
+                track_id: next.clone(),
+                position_ms: 0,
+            },
+        );
+        assert!(state.loading);
+        apply_event(
+            &mut state,
+            &mut request,
+            PlayerEvent::Unavailable {
+                play_request_id: 2,
+                track_id: next.clone(),
+            },
+        );
+        assert!(state.loading && !state.error.is_empty());
+        apply_event(
+            &mut state,
+            &mut request,
+            PlayerEvent::Stopped {
+                play_request_id: 2,
+                track_id: next,
+            },
+        );
+        assert!(!state.playing && !state.loading);
     }
     #[test]
     fn invalid_stored_credentials_fall_back_to_access_token() {

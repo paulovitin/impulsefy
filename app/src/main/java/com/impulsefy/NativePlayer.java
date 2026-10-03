@@ -95,6 +95,7 @@ final class NativePlayer implements AutoCloseable {
             while (offset < pcm.length && !closed && target == audio) {
                 int count = target.write(pcm, offset, Math.min(4096, pcm.length - offset), AudioTrack.WRITE_BLOCKING);
                 if (count <= 0) {
+                    releaseFailedAudio(target);
                     if (!closed) reportError("A saída de áudio parou (código " + count + "). Toque em reproduzir para tentar novamente.");
                     return false;
                 }
@@ -102,6 +103,7 @@ final class NativePlayer implements AutoCloseable {
             }
             return offset == pcm.length;
         } catch (RuntimeException error) {
+            releaseFailedAudio(target);
             if (!closed) reportError("Falha na saída de áudio: " + error.getMessage());
             return false;
         }
@@ -123,6 +125,11 @@ final class NativePlayer implements AutoCloseable {
 
     private void reportError(String message) {
         main.post(() -> { if (!closed) callback.onAudioError(message); });
+    }
+
+    private synchronized void releaseFailedAudio(AudioTrack target) {
+        // A failed write may race with shutdown/restart; only retire its own track.
+        if (audio == target) releaseAudio();
     }
 
     private synchronized void releaseAudio() {

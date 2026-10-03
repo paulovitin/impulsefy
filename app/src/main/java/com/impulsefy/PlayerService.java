@@ -194,7 +194,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
 
     @Override public void onAudioFocusChange(int change) {
         onMain(() -> {
-            if (change == AudioManager.AUDIOFOCUS_GAIN) { hasFocus = true; if (player != null && snapshot().optBoolean("playing")) player.setVolume(1f); }
+            if (change == AudioManager.AUDIOFOCUS_GAIN) { hasFocus = true; if (player != null) player.setVolume(1f); }
             else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) { if (player != null) player.setVolume(0.2f); }
             else { hasFocus = false; pause(); }
         });
