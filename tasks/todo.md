@@ -71,24 +71,36 @@ Validação no carro em 2026-10-03:
 - A reconexão após reiniciar o app e a renovação por expiração ainda não foram
   verificadas ao vivo após essa correção; a reprodução em andamento foi preservada.
 
-## Login compartilhado com navegador temporário (2026-10-03)
+## Pareamento direto do Spotify (2026-10-03)
 
-- [x] Mesmos dois clientes públicos usados pelo Spotifast, sem Client ID por usuário.
-- [x] Navegador Chromium efêmero no servidor, controlado pelo celular via HTTPS/WS.
-- [x] Dois verificadores PKCE no Android; códigos consumidos uma vez; tokens separados
-      para biblioteca/áudio, criptografados em um registro, com renovação independente.
-- [x] Librespot usa a identidade de reprodução e recusa divergência entre contas.
-- [x] Preservada compatibilidade com OAuth antigo e credenciais Spotify Connect.
-- [x] Doze testes Node/Chromium locais e no Docker restrito, cinco testes Rust, Clippy,
-      build ARM64/ARMv7, R8/lint e testes Android API 28 passaram.
-- [x] Deploy na mesma porta 8787; tela oficial Spotify validada por HTTPS/WS público.
-- [x] APK instalado no carro sem desinstalação; sessão antiga restaurou a biblioteca.
-      Depois foi encerrada pela interface para validar o novo fluxo do zero.
-- [ ] Usuário concluir as duas autorizações reais e confirmar biblioteca/reprodução.
-- [ ] Reiniciar o app e verificar reprodução com a nova sessão persistida.
-- [ ] Renovação automática por expiração ainda não verificada ao vivo.
+- [x] Autorização de dispositivo em `spotify.com/pair`, uma confirmação no navegador
+      do celular, sem Client ID próprio, app auxiliar ou retorno manual de URLs.
+- [x] Código privado, token e renovação diretamente entre Android e Spotify.
+      Credenciais persistidas no Android Keystore; logout remove as duas credenciais.
+- [x] Biblioteca, curtidas, busca e playlists pela mesma sessão do librespot.
+      Leituras reais confirmadas, incluindo segunda página de biblioteca/curtidas/busca.
+- [x] Corrigida a identidade do client-token no librespot Android: o cliente de
+      pareamento desktop precisa de um client-token correspondente. Patch local
+      em `native/vendor/librespot-core/src/spclient.rs`, sem alterar sessões legadas.
+- [x] Tela de QR existente reutilizada; configuração de servidor removida do login.
+      Erros do player também aparecem na biblioteca, com botão para tentar novamente.
+- [x] Sete testes Rust e Clippy passaram. A dependência vendorizada mantém um aviso
+      de lint upstream (`expect(deprecated)` sem depreciação nesta versão do compilador).
+- [x] Instrumentação Android API 28 passou: QR real decodificado, negação, polling,
+      slow_down, cancelamento, renovação, restauração do Keystore, JNI do catálogo,
+      áudio, foco e compatibilidade com autorizações anteriores.
+- [x] Build ARM64/ARMv7, R8/lint, assinatura e instalação no carro passaram.
+- [x] Usuário autorizou o QR do próprio carro. Biblioteca carregou e reprodução
+      foi confirmada pelo usuário: “ta tocando a musica meu amigo”.
+- [x] A autorização foi preservada em duas atualizações do APK por ADB. O app
+      reconectou usando o login salvo depois da correção do client-token.
+- [x] Navegador remoto e protótipos de duas autorizações removidos da produção.
+      Ponte legada na mesma porta 8787, sete testes na imagem, HTTPS saudável,
+      cerca de 13 MiB em repouso. O APK novo não usa essa ponte.
+- [x] APK atualizado copiado para `../impulsefy.apk`.
+- [ ] Renovação real após expiração e reconexão com a credencial de reprodução
+      persistida ainda não observadas ao vivo; a música em andamento foi preservada.
 
-A digitação do navegador remoto passa pelo servidor. A confirmação no celular
-informa isso; senhas/cookies não são registrados. O processo efêmero usa sandbox,
-capabilities removidas, seccomp e tmpfs. Não há persistência de sessão no servidor.
-O cliente compartilhado continua dependendo de sua cota/disponibilidade no Spotify.
+O teste local com token da conta foi temporário; arquivos de token foram removidos.
+A integração continua dependendo dos endpoints e do cliente público do Spotify.
+Não houve publicação do APK no servidor, conforme o escopo corrigido pelo usuário.

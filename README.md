@@ -15,7 +15,7 @@ Pré-requisitos: JDK 17, Android SDK 36, Build Tools 36.0.0, NDK
 ```sh
 sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018'
 export ANDROID_HOME=/caminho/do/android-sdk
-./scripts/build-apk.sh -PrelayUrl=https://musica.seudominio.com
+./scripts/build-apk.sh
 adb install -r artifacts/impulsefy.apk
 ```
 
@@ -25,39 +25,30 @@ um APK otimizado sem assinatura, para assinatura com sua própria chave.
 
 ## Login no carro
 
-1. Publique a ponte seguindo [server/README.md](server/README.md).
-2. Inclua seu endereço HTTPS no build acima, ou informe-o uma vez em
-   **Endereço de conexão** no aplicativo.
-3. Toque em conectar, leia o QR no celular e confira o código.
-4. Entre no Spotify pela sessão temporária exibida no celular. Autorize biblioteca
-   e áudio com a mesma conta; são dois consentimentos dentro do mesmo navegador.
-5. O carro troca os códigos por tokens e salva as autorizações no Android Keystore.
-   Nos próximos usos, reutiliza a sessão salva.
+1. Instale o APK e toque em **Conectar Spotify**.
+2. Leia o QR no celular. Ele abre `https://spotify.com/pair` com o código preenchido.
+3. Entre e confirme no Spotify. O carro recebe a autorização automaticamente.
 
-O usuário não precisa criar um aplicativo no Spotify Developer Dashboard. Como no
-[Spotifast](https://github.com/crmne/spotifast/blob/main/src/auth.rs), a biblioteca usa
-um Client ID público compartilhado e o áudio usa uma autorização separada de
-reprodução. O aplicativo compartilhado tem cota global e depende da disponibilidade
-desses clientes no Spotify; isso não garante acesso ilimitado para qualquer conta.
-É necessário Spotify Premium para reproduzir pelo librespot.
+Funciona pelo navegador do Android ou iPhone, sem app auxiliar, cópia de URLs,
+Client ID próprio ou servidor de login. A mesma sessão carrega playlists, músicas
+curtidas e busca, e autoriza o áudio. Nos próximos usos, o carro reutiliza a credencial
+salva; uma sessão revogada ou dados apagados exigem novo pareamento. É necessário
+Spotify Premium para reprodução com librespot.
 
-O callback loopback do desktop voltaria ao próprio celular. Para recebê-lo, a ponte
-abre um Chromium temporário no servidor e transmite sua tela e os comandos do usuário
-por HTTPS/WebSocket. O celular controla a página real do Spotify nesse navegador.
-A digitação passa pelo servidor; confie no operador do endereço configurado. Senhas,
-cookies, telas e teclas não são registrados pelo serviço. O processo e o perfil
-temporário são descartados ao terminar, cancelar ou expirar o QR.
+O fluxo usa a autorização de dispositivo implementada pelo
+[go-librespot](https://github.com/devgianlu/go-librespot/blob/master/session/oauth2.go),
+com o cliente público `65b708073fc0480ea92a077233ca87bd` e a permissão `streaming`.
+O carro solicita e consulta o código diretamente no Spotify. O QR contém apenas o
+código público; o segredo de consulta fica em memória no carro. Tokens e credenciais
+persistem criptografados com AES-GCM e chave no Android Keystore.
 
-Os dois verificadores PKCE ficam somente na memória do carro. A ponte entrega os
-códigos uma única vez a quem possui o segredo de consulta; a troca e a renovação dos
-tokens OAuth acontecem diretamente entre Android e Spotify. Os tokens e a credencial
-de reprodução persistem criptografados com AES-GCM e chave no Android Keystore.
-A conta do áudio precisa coincidir com a conta da biblioteca.
+Biblioteca e busca usam os endpoints da sessão librespot, sem depender da cota do
+cliente compartilhado na Web API. Essa integração não oficial depende da
+compatibilidade desses endpoints e do cliente público com o Spotify.
 
-Celular e carro precisam de internet, mas podem usar redes diferentes. As sessões
-antigas continuam compatíveis: um relay sem `BROWSER_LOGIN=1` usa o Client ID do
-operador com callback HTTPS e a primeira autorização de áudio via Spotify Connect
-na mesma rede Wi-Fi. Esse caminho continua disponível para instalações existentes.
+Sessões anteriores continuam compatíveis. A [ponte HTTPS](server/README.md)
+permanece publicada para APKs antigos, na porta local 8787 de tonton. O APK atual
+não usa essa ponte; cada instalação precisa apenas de acesso à internet.
 
 ## Escopo
 
@@ -71,6 +62,7 @@ sem simular áudio real.
 
 - [Spotifast](https://github.com/crmne/spotifast): referência para autenticação e arquitetura.
 - [librespot](https://github.com/librespot-org/librespot): cliente e decodificação de áudio, licença MIT.
+  A cópia de `librespot-core` tem um [patch de compatibilidade Android](native/vendor/librespot-core/IMPULSEFY.md) para a identidade do pareamento.
 - [ZXing](https://github.com/zxing/zxing): geração local do QR, Apache 2.0.
 - [Inter](https://github.com/google/fonts/tree/main/ofl/inter): fonte, SIL OFL (incluída nos assets).
 
@@ -79,17 +71,14 @@ Estado das verificações e limites de validação: [tasks/todo.md](tasks/todo.m
 ## Verificar
 
 ```sh
-npm --prefix server ci
-npm --prefix server exec -- playwright install --only-shell chromium
 npm --prefix server test
 cargo test --manifest-path native/Cargo.toml --locked
 cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -- -D warnings
 ANDROID_SERIAL=emulator-5554 ./scripts/test-android.sh
 ```
 
-Use um emulador de teste sem uma conta conectada e deixe a porta local 8787
-livre. O teste Android percorre a prévia, decodifica o QR efetivamente renderizado,
-confere PKCE e cancelamento pelo celular, exercita o Keystore, chama Rust via JNI
+Use um emulador de teste sem uma conta conectada. O teste Android percorre a prévia, decodifica o QR efetivamente renderizado,
+confere a autorização de dispositivo, polling, backoff e cancelamento, exercita o Keystore, chama Rust via JNI
 e escreve PCM silencioso no AudioTrack, incluindo recuperação de saída inválida
-e restauração de volume após interrupção. Os testes de OAuth usam uma autoridade
-local simulada; não substituem a validação com uma conta Spotify real.
+e restauração de volume após interrupção. Os testes de autenticação usam respostas
+simuladas; não substituem a validação com uma conta Spotify real.

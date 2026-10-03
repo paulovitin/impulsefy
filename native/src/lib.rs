@@ -1,7 +1,8 @@
+mod catalog;
 use futures_util::StreamExt;
 use jni::{
     objects::{GlobalRef, JClass, JObject, JString, JValue},
-    sys::jlong,
+    sys::{jlong, jstring},
     JNIEnv, JavaVM,
 };
 use librespot_connect::{
@@ -65,6 +66,13 @@ enum Command {
         playback_oauth: bool,
         #[serde(default)]
         username: String,
+        #[serde(default)]
+        native_session: bool,
+    },
+    #[serde(skip)]
+    Catalog {
+        path: String,
+        reply: std::sync::mpsc::Sender<serde_json::Value>,
     },
     Load {
         uris: Vec<String>,
@@ -88,6 +96,7 @@ struct Login {
     device_id: String,
     playback_oauth: bool,
     username: String,
+    native_session: bool,
 }
 
 struct Bridge {
@@ -293,6 +302,22 @@ async fn connect(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, String> {
     result
 }
 
+fn connection_failure(error: &librespot_core::Error) -> String {
+    let message = error.error.to_string();
+    // Only fixed protocol error labels are allowed into diagnostics.
+    for code in [
+        "INVALID_CREDENTIALS",
+        "BAD_REQUEST",
+        "CLIENT_TOKEN_INVALID",
+        "UNSUPPORTED_LOGIN_PROTOCOL",
+    ] {
+        if message.contains(code) {
+            return code.into();
+        }
+    }
+    format!("{:?}", error.kind)
+}
+
 async fn connect_once(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, String> {
     let config = SessionConfig {
         client_id: if login.playback_oauth {
@@ -327,6 +352,19 @@ async fn connect_once(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, Stri
         move || Box::new(AndroidSink(output)),
     );
     let events = player.get_player_event_channel();
+    // Distinguish device identification from the account grant without logging tokens.
+    match tokio::time::timeout(Duration::from_secs(15), session.spclient().client_token()).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            return Err(format!(
+                "Spotify recusou a identificação do dispositivo ({:?}). Tente novamente.",
+                error.kind
+            ))
+        }
+        Err(_) => {
+            return Err("O Spotify demorou para identificar o dispositivo. Tente novamente.".into())
+        }
+    }
     let init = Spirc::new(
         ConnectConfig {
             name: "Impulsefy".into(),
@@ -343,7 +381,7 @@ async fn connect_once(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, Stri
     let result = tokio::select! {
         result = tokio::time::timeout(Duration::from_secs(30), init) => match result {
             Ok(Ok(pair)) => Ok(pair),
-            Ok(Err(error)) => Err(format!("Falha ao conectar ao Spotify ({:?}). Verifique a rede, a assinatura Premium ou entre novamente.", error.kind)),
+            Ok(Err(error)) => Err(format!("Falha ao conectar ao Spotify ({}). Tente novamente.", connection_failure(&error))),
             Err(_) => Err("O Spotify não respondeu a tempo. Verifique a rede e tente novamente.".into()),
         },
         _ = async { while !bridge.closed.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(100)).await; } } => Err("Player encerrado".into()),
@@ -351,6 +389,7 @@ async fn connect_once(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, Stri
     match result {
         Ok((spirc, task)) => {
             if login.playback_oauth
+                && !login.native_session
                 && (login.username.is_empty() || session.username() != login.username)
             {
                 session.shutdown();
@@ -510,11 +549,11 @@ async fn run(bridge: Arc<Bridge>, mut commands: mpsc::UnboundedReceiver<Command>
                 let Some(command) = command else { break };
                 match command {
                     Command::Shutdown => break,
-                    Command::Connect { access_token, credential, device_id, playback_oauth, username } => {
+                    Command::Connect { access_token, credential, device_id, playback_oauth, username, native_session } => {
                         engine.take(); current_request = None; retry_at = None; retry_count = 0;
                         state = State { device_id: device_id.clone(), loading: true, ..State::default() };
                         queue.clear(); bridge.publish(&state);
-                        login = Some(Login { access_token, credential, device_id, playback_oauth, username });
+                        login = Some(Login { access_token, credential, device_id, playback_oauth, username, native_session });
                         match connect(login.as_ref().unwrap(), bridge.clone()).await {
                             Ok(next) => {
                                 let saved = Credentials { username: Some(next.session.username()), auth_type: AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS, auth_data: next.session.auth_data() };
@@ -525,6 +564,20 @@ async fn run(bridge: Arc<Bridge>, mut commands: mpsc::UnboundedReceiver<Command>
                             Err(error) => { state.error = error; state.loading = false; }
                         }
                         bridge.publish(&state); state.credential = None;
+                    }
+                    Command::Catalog { path, reply } => {
+                        if let Some(active) = &engine {
+                            let session = active.session.clone();
+                            tokio::spawn(async move {
+                                let result=tokio::time::timeout(Duration::from_secs(30),catalog::read(&session,&path)).await;
+                                let value=match result {
+                                    Ok(Ok(value))=>value,
+                                    Ok(Err(message))=>serde_json::json!({"error":message}),
+                                    Err(_)=>serde_json::json!({"error":"O Spotify demorou para responder. Tente novamente."}),
+                                };
+                                let _=reply.send(value);
+                            });
+                        } else {let _=reply.send(serde_json::json!({"error":"Conectando ao Spotify. Tente novamente em instantes."}));}
                     }
                     command => {
                         if let Some(active) = &engine {
@@ -678,6 +731,50 @@ pub extern "system" fn Java_com_impulsefy_NativePlayer_nativeCommand(
     })();
     if let Err(message) = result {
         let _ = env.throw_new("java/lang/IllegalStateException", message);
+    }
+}
+
+// Called only by Java network workers. Never hold the handle lock while waiting.
+#[no_mangle]
+pub extern "system" fn Java_com_impulsefy_NativePlayer_nativeRead(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    path: JString,
+) -> jstring {
+    let result = (|| -> Result<String, String> {
+        let path: String = env
+            .get_string(&path)
+            .map_err(|_| "Caminho inválido")?
+            .into();
+        if path.len() > 2048 {
+            return Err("Caminho inválido".into());
+        }
+        let commands = handles()
+            .lock()
+            .map_err(|_| "Player indisponível")?
+            .get(&handle)
+            .ok_or("Player encerrado")?
+            .commands
+            .clone();
+        let (reply, receive) = std::sync::mpsc::channel();
+        commands
+            .send(Command::Catalog { path, reply })
+            .map_err(|_| "Player encerrado")?;
+        receive
+            .recv_timeout(Duration::from_secs(35))
+            .map(|value| value.to_string())
+            .map_err(|_| "O Spotify demorou para responder. Tente novamente.".into())
+    })();
+    match result {
+        Ok(value) => env
+            .new_string(value)
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut()),
+        Err(message) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", message);
+            std::ptr::null_mut()
+        }
     }
 }
 
@@ -856,6 +953,7 @@ mod tests {
         let login = Login {
             access_token: "test-token".into(),
             credential: "not-json".into(),
+            native_session: false,
             playback_oauth: false,
             username: String::new(),
             device_id: "test".into(),

@@ -12,6 +12,8 @@ import java.nio.charset.StandardCharsets;
 
 public final class SpotifyApi {
     private final AuthManager auth;
+    interface SessionReader { JSONObject read(String path) throws Exception; }
+    private final SessionReader reader;
 
     public static final class ApiException extends Exception {
         public final int status;
@@ -24,7 +26,7 @@ public final class SpotifyApi {
         }
     }
 
-    public SpotifyApi(AuthManager auth) { this.auth = auth; }
+    SpotifyApi(AuthManager auth, SessionReader reader) { this.auth = auth; this.reader = reader; }
 
     public JSONObject get(String relativePath) throws Exception { return request("GET", relativePath, null); }
 
@@ -37,6 +39,10 @@ public final class SpotifyApi {
         if (path.isAbsolute() || path.getRawAuthority() != null || path.getFragment() != null || path.getRawPath() == null
                 || !path.getRawPath().matches("/?[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*/*")) {
             throw new IllegalArgumentException("Use um caminho relativo da API Spotify.");
+        }
+        if (auth.usesNativeCatalog()) {
+            if (!"GET".equals(method)) throw new IllegalArgumentException("Operação indisponível.");
+            return reader.read(relativePath.startsWith("/") ? relativePath : "/" + relativePath);
         }
         String url = "https://api.spotify.com/v1/" + (relativePath.startsWith("/") ? relativePath.substring(1) : relativePath);
         String access = auth.accessToken();

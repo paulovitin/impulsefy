@@ -136,16 +136,20 @@ public final class MainActivity extends Activity {
         regular = Build.VERSION.SDK_INT >= 28 ? Typeface.create(inter, 500, false) : inter;
         medium = regular;
         artwork = new Artwork(this);
-        configureAuth(preferences.getString("relay", BuildConfig.RELAY_URL));
+        configureAuth();
         demo = BuildConfig.DEBUG && getIntent().getBooleanExtra("demo", false);
         if (demo || auth.isSignedIn()) showMain(); else showLogin();
     }
 
-    private void configureAuth(String address) {
+    private void configureAuth() {
         sessionGeneration++; connecting = false;
         if (auth != null) auth.close();
-        auth = new AuthManager(this, address == null ? "" : address);
-        api = new SpotifyApi(auth);
+        auth = new AuthManager(this);
+        api = new SpotifyApi(auth, path -> {
+            PlayerService source = player;
+            if (source == null) throw new Exception("Conectando ao Spotify. Tente novamente em instantes.");
+            return source.read(path);
+        });
     }
 
     private void immersive() {
@@ -184,7 +188,6 @@ public final class MainActivity extends Activity {
         heading.addView(label("Configure com o carro parado", 11, MUTED));
         clock = label(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()), 18, TEXT);
         LinearLayout.LayoutParams clockParams = new LinearLayout.LayoutParams(-2, -2); clockParams.leftMargin = dp(16); heading.addView(clock, clockParams);
-        heading.addView(iconButton("settings", "Alterar endereço de conexão", false, v -> connectionAddress(false)), new LinearLayout.LayoutParams(dp(48), dp(40)));
         root.addView(heading, new LinearLayout.LayoutParams(-1, dp(40)));
         LinearLayout body = horizontal(); LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(-1, 0, 1); bodyParams.topMargin = dp(14); root.addView(body, bodyParams);
 
@@ -237,7 +240,6 @@ public final class MainActivity extends Activity {
     }
 
     private void startPairing() {
-        if (preferences.getString("relay", BuildConfig.RELAY_URL).trim().isEmpty()) { connectionAddress(true); return; }
         auth.cancel(); int attempt = ++pairingGeneration; AuthManager owner = auth;
         pairingExpiresAt = 0; qrStatus.setText("Preparando uma conexão segura…");
         qrCode.setText("CONECTE PELO CELULAR"); pairingButton.setText("Preparando…"); pairingButton.setEnabled(false);
@@ -319,7 +321,7 @@ public final class MainActivity extends Activity {
         center = vertical(); content.addView(center, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root); openScreen(selected);
         if (!mainScreen) return;
-        if (demo) renderDemoPlayer(); else { ensurePlayerService(); acceptPlayerState(player == null ? new JSONObject() : player.snapshot()); loadProfile(); connectPlayer(); }
+        if (demo) renderDemoPlayer(); else { ensurePlayerService(); acceptPlayerState(player == null ? new JSONObject() : player.snapshot()); if (!auth.usesNativeCatalog()) loadProfile(); connectPlayer(); }
     }
 
     private void ensurePlayerService() {
@@ -398,6 +400,7 @@ public final class MainActivity extends Activity {
             ((GlyphView) row.getChildAt(0)).setColor(active ? ACCENT : MUTED); ((TextView) row.getChildAt(1)).setTextColor(active ? TEXT : MUTED);
             row.setSelected(active);
         }
+        lastPath = null; nextPath = null;
         boolean search = screen.equals("search");
         pageTitle.setText(screen.equals("home") ? "Boa viagem." : screen.equals("library") ? "Sua biblioteca" : search ? "Encontre seu som" : "Músicas curtidas");
         pageSubtitle.setText(demo ? "Uma prévia da experiência Impulsefy." : screen.equals("home") ? "Sua música acompanha o caminho." : screen.equals("library") ? "As playlists que vão com você." : search ? "Uma música para cada momento." : "As favoritas, sempre por perto.");
@@ -418,7 +421,7 @@ public final class MainActivity extends Activity {
         body.addView(list, new FrameLayout.LayoutParams(-1, -1));
         status = label("", 14, MUTED); status.setGravity(Gravity.CENTER); status.setPadding(dp(22), dp(14), dp(22), dp(14));
         body.addView(status, new FrameLayout.LayoutParams(-1, -1)); list.setEmptyView(status);
-        retryButton = button("Tentar novamente", false, v -> loadPage(lastPath, lastKind, lastAppend)); retryButton.setVisibility(View.GONE);
+        retryButton = button("Tentar novamente", false, v -> { if (auth.usesNativeCatalog() && !playerState.optBoolean("connected")) connectPlayer(); loadPage(lastPath, lastKind, lastAppend); }); retryButton.setVisibility(View.GONE);
         listPanel.addView(retryButton, new LinearLayout.LayoutParams(-1, dp(48)));
         moreButton = button("Carregar mais", false, v -> { if (nextPath != null) loadPage(nextPath, lastKind, true); }); moreButton.setVisibility(View.GONE);
         listPanel.addView(moreButton, new LinearLayout.LayoutParams(-1, dp(48)));
@@ -465,6 +468,9 @@ public final class MainActivity extends Activity {
         retryButton.setVisibility(View.GONE); moreButton.setVisibility(View.GONE);
         if (!append) { rows.clear(); adapter.notifyDataSetChanged(); status.setText("Carregando sua música…"); }
         else { moreButton.setVisibility(View.VISIBLE); moreButton.setText("Carregando…"); moreButton.setEnabled(false); }
+        if (owner.usesNativeCatalog() && !playerState.optBoolean("connected")) {
+            status.setText("Conectando ao Spotify…"); return;
+        }
         network.execute(() -> {
             if (request != generation || destroyed || owner != auth || session != sessionGeneration) return;
             try {
@@ -605,7 +611,7 @@ public final class MainActivity extends Activity {
                 main.post(() -> {
                     if (destroyed || demo || !mainScreen || !premiumAllowed || owner != auth || session != sessionGeneration || service != player) return;
                     if (!owner.isSignedIn()) { sessionExpired(); return; }
-                    service.connect(token, credential, device, playbackOAuth, username);
+                    service.connect(token, credential, device, playbackOAuth, username, owner.usesNativeCatalog());
                 });
             } catch (Exception error) {
                 main.post(() -> {
@@ -625,7 +631,16 @@ public final class MainActivity extends Activity {
             try { if (owner == auth && session == sessionGeneration && owner.isSignedIn()) owner.savePlaybackCredential(credential); } catch (Exception ignored) { }
         });
         boolean changedTrack = !playerState.optString("uri", "").equals(state.optString("uri", ""));
+        boolean newlyConnected = state.optBoolean("connected") && !playerState.optBoolean("connected");
         playerState = state; stateAt = SystemClock.elapsedRealtime();
+        if (mainScreen && !demo && auth.usesNativeCatalog() && !state.optBoolean("connected") && !state.optString("error").isEmpty() && status != null) {
+            status.setText(state.optString("error"));
+            retryButton.setVisibility(View.VISIBLE);
+        }
+        if (newlyConnected && mainScreen && !demo && auth.usesNativeCatalog()) {
+            loadProfile();
+            if (lastPath != null) loadPage(lastPath, lastKind, false);
+        }
         if (state.optBoolean("connected") || (!state.optBoolean("loading") && !state.optString("error", "").isEmpty())) connecting = false;
         if (!mainScreen || demo || playerTitle == null) return;
         String title = state.optString("title", ""); String artist = state.optString("artist", "");
@@ -659,25 +674,7 @@ public final class MainActivity extends Activity {
     private void settings() {
         if (demo) { new AlertDialog.Builder(this).setTitle("Você está na prévia").setMessage("Conecte seu Spotify para ouvir suas músicas no carro.")
                 .setPositiveButton("Conectar Spotify", (dialog, which) -> { showLogin(); startPairing(); }).setNegativeButton("Continuar na prévia", null).setNeutralButton("Voltar", (dialog, which) -> showLogin()).show(); return; }
-        new AlertDialog.Builder(this).setTitle(accountName).setItems(new String[]{"Endereço de conexão", "Desconectar Spotify"}, (dialog, which) -> { if (which == 0) connectionAddress(false); else logout(); }).setNegativeButton("Fechar", null).show();
-    }
-
-    private void connectionAddress(boolean connectAfter) {
-        LinearLayout panel = vertical(); panel.setPadding(dp(24), dp(8), dp(24), 0);
-        TextView description = label("Configure uma vez o endereço de conexão do seu Impulse. Depois, basta usar o QR pelo celular.", 15, MUTED); panel.addView(description);
-        EditText input = new EditText(this); input.setTextColor(TEXT); input.setHintTextColor(MUTED); input.setTypeface(regular); input.setTextSize(16); input.setSingleLine(true); input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        input.setHint("https://seu-endereço"); input.setText(preferences.getString("relay", BuildConfig.RELAY_URL)); panel.addView(input, new LinearLayout.LayoutParams(-1, dp(60)));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Endereço de conexão").setView(panel).setPositiveButton("Salvar", null).setNegativeButton("Agora não", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            String address = input.getText().toString().trim().replaceAll("/+$", "");
-            try { URI uri = new URI(address); if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null || !uri.getRawPath().isEmpty()) throw new IllegalArgumentException(); }
-            catch (Exception error) { input.setError("Use um endereço completo começando com https://"); return; }
-            boolean changed = !address.equals(preferences.getString("relay", BuildConfig.RELAY_URL));
-            if (changed) { releasePlayer(); auth.logout(); preferences.edit().putString("relay", address).apply(); configureAuth(address); }
-            dialog.dismiss();
-            if (changed || connectAfter) { showLogin(); startPairing(); }
-        }));
-        dialog.show();
+        new AlertDialog.Builder(this).setTitle(accountName).setItems(new String[]{"Desconectar Spotify"}, (dialog, which) -> logout()).setNegativeButton("Fechar", null).show();
     }
 
     private void logout() {

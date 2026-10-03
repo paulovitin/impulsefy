@@ -13,6 +13,10 @@ librespot-connect = { version = "0.8", default-features = false }
 librespot-discovery = { version = "0.8", default-features = false, features = ["with-libmdns"] }
 librespot-metadata = { version = "0.8", default-features = false }
 librespot-protocol = { version = "0.8", default-features = false }
+protobuf = "3"
+protobuf-json-mapping = "3"
+http = "1"
+url = "2"
 jni = "0.21"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
@@ -24,3 +28,6 @@ opt-level = "s"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[patch.crates-io]
+librespot-core = { path = "vendor/librespot-core" }

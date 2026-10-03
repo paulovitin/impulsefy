@@ -32,7 +32,7 @@ public final class SmokeInstrumentation extends Instrumentation {
         Activity activity = null;
         AuthManager auth = null;
         try {
-            verifyRelayConfigurationError();
+            verifyDeviceAuthorization();
             verifySeparatePlaybackGrant();
             System.loadLibrary("impulsefy");
             CountDownLatch nativeReply = new CountDownLatch(1);
@@ -44,6 +44,10 @@ public final class SmokeInstrumentation extends Instrumentation {
             })) {
                 output.command(new JSONObject().put("command", "pause"));
                 require(nativeReply.await(10, TimeUnit.SECONDS), "Rust -> Java state callback failed");
+                boolean disconnectedRead = false;
+                try { output.read("/me"); }
+                catch (Exception expected) { disconnectedRead = expected.getMessage().startsWith("Conectando ao Spotify"); }
+                require(disconnectedRead, "catalog JNI did not report disconnected session");
                 // Silence checks the actual PCM sink without needing a Spotify token or audible tone.
                 java.lang.reflect.Method start = NativePlayer.class.getDeclaredMethod("startAudio");
                 java.lang.reflect.Method write = NativePlayer.class.getDeclaredMethod("writePcm", short[].class);
@@ -92,10 +96,16 @@ public final class SmokeInstrumentation extends Instrumentation {
             runOnMainSync(screen::finish);
             activity = null;
 
-            // Drive the real login view and decode its rendered QR, not the underlying URL.
-            // This preference is test-only; adb reverse routes it to the local relay.
-            getTargetContext().getSharedPreferences("impulsefy_ui", 0).edit().putString("relay", "http://127.0.0.1:8787").commit();
+            // Exercise the actual QR view with a deterministic Spotify device response.
             activity = startActivitySync(new Intent(getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            java.lang.reflect.Field authField = MainActivity.class.getDeclaredField("auth");
+            authField.setAccessible(true);
+            ((AuthManager) authField.get(activity)).close();
+            authField.set(activity, new AuthManager(getTargetContext(), (method, endpoint, body, type, bearer) -> {
+                if (endpoint.endsWith("/device/authorize")) return deviceResponse();
+                require(body.contains("device_code=private-device-code"), "device code missing in token poll");
+                return new Http.Response(400, "{\"error\":\"access_denied\"}", 0);
+            }));
             Activity login = activity;
             runOnMainSync(() -> clickText(login.getWindow().getDecorView(), "Conectar Spotify"));
             awaitText(login, "Gerar outro QR");
@@ -110,7 +120,7 @@ public final class SmokeInstrumentation extends Instrumentation {
             qr.getPixels(pixels, 0, qr.getWidth(), 0, 0, qr.getWidth(), qr.getHeight());
             String url = new MultiFormatReader().decode(new BinaryBitmap(new HybridBinarizer(new RGBLuminanceSource(qr.getWidth(), qr.getHeight(), pixels)))).getText();
             qr.recycle();
-            require(url.startsWith("http://127.0.0.1:8787/pair/"), "QR does not point to pairing page");
+            require("https://spotify.com/pair?code=ABC123".equals(url), "QR does not point to Spotify pairing");
             require(!url.contains("secret") && !url.contains("verifier"), "secret present in QR");
             // Let the OS activity transition finish before recording the rendered surface.
             Thread.sleep(600);
@@ -120,21 +130,11 @@ public final class SmokeInstrumentation extends Instrumentation {
                 capture.compress(Bitmap.CompressFormat.PNG, 100, file);
             }
             capture.recycle();
-            String phonePage = request(url, null, null);
-            java.util.regex.Matcher consent = java.util.regex.Pattern.compile("name=\"consent\" value=\"([^\"]+)\"").matcher(phonePage);
-            require(consent.find(), "mobile consent form missing");
-            String target = request(url + "/authorize", "consent=" + consent.group(1), "Location");
-            android.net.Uri authorize = android.net.Uri.parse(target);
-            require("accounts.spotify.com".equals(authorize.getHost()), "unexpected OAuth authority");
-            require("S256".equals(authorize.getQueryParameter("code_challenge_method")), "PKCE S256 missing");
-            require(!target.contains("code_verifier"), "verifier leaked to phone");
-            request("http://127.0.0.1:8787/callback?error=access_denied&state=" + authorize.getQueryParameter("state"), null, null);
             awaitText(login, "O login foi cancelado");
-            auth = new AuthManager(getTargetContext(), "http://127.0.0.1:8787");
+            auth = new AuthManager(getTargetContext());
             require(!auth.isSignedIn(), "declined consent created a session");
             runOnMainSync(login::finish);
             activity = null;
-            getTargetContext().getSharedPreferences("impulsefy_ui", 0).edit().remove("relay").commit();
 
             // Exercise the real device Keystore without inventing a successful Spotify login.
             SecureStore secure = new SecureStore(getTargetContext());
@@ -150,13 +150,12 @@ public final class SmokeInstrumentation extends Instrumentation {
             require(rejected, "signed-out session accepted a late playback credential");
             auth.logout();
             require(auth.playbackCredential() == null, "logout retained credential");
-            result.putString("stream", "\nPASS: Android navigation, Rust JNI roundtrip, PCM AudioTrack lifecycle and failed-output recovery, focus gain while loading, rendered QR decode, S256, phone consent denial, encrypted persistence, separate playback grant restoration, signed-out write protection and relay configuration errors.\n");
+            result.putString("stream", "\nPASS: Android navigation, Rust JNI roundtrip, PCM AudioTrack lifecycle and failed-output recovery, focus gain while loading, rendered Spotify QR decode, device consent denial, device polling/backoff/cancellation/refresh, encrypted persistence, separate playback grant restoration, signed-out write protection.\n");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable failure) {
             result.putString("stream", "\nFAIL: " + android.util.Log.getStackTraceString(failure));
             finish(Activity.RESULT_CANCELED, result);
         } finally {
-            getTargetContext().getSharedPreferences("impulsefy_ui", 0).edit().remove("relay").commit();
             if (auth != null) auth.close();
             if (activity != null) { Activity screen = activity; runOnMainSync(screen::finish); }
         }
@@ -169,7 +168,7 @@ public final class SmokeInstrumentation extends Instrumentation {
         JSONObject audio = new JSONObject().put("client_id", AuthManager.PLAYBACK_CLIENT_ID).put("access_token", "audio-only")
                 .put("refresh_token", "audio-refresh").put("expires_at", System.currentTimeMillis() + 600_000).put("username", "same-account");
         secure.put("spotify_oauth", web.put("playback", audio).toString());
-        try (AuthManager restored = new AuthManager(getTargetContext(), "http://127.0.0.1:8787")) {
+        try (AuthManager restored = new AuthManager(getTargetContext())) {
             require(restored.usesPlaybackOAuth(), "separate playback grant lost on restart");
             require("web-only".equals(restored.accessToken()), "Web API received playback token");
             require("audio-only".equals(restored.playbackAccessToken()), "player received Web API token");
@@ -177,26 +176,71 @@ public final class SmokeInstrumentation extends Instrumentation {
             restored.logout();
         }
         web.remove("playback"); secure.put("spotify_oauth", web.toString());
-        try (AuthManager legacy = new AuthManager(getTargetContext(), "http://127.0.0.1:8787")) {
+        try (AuthManager legacy = new AuthManager(getTargetContext())) {
             require(!legacy.usesPlaybackOAuth(), "legacy session incorrectly migrated");
             require("web-only".equals(legacy.playbackAccessToken()), "legacy Connect grant broken");
             legacy.logout();
         }
     }
 
-    private void verifyRelayConfigurationError() throws Exception {
-        java.lang.reflect.Method check = AuthManager.class.getDeclaredMethod("requireRelay", Http.Response.class, int.class);
-        check.setAccessible(true);
-        String[] bodies = {"{\"error\":\"spotify_not_configured\"}", "{\"error\":\"busy\"}", "<html>private proxy details</html>"};
-        for (int i = 0; i < bodies.length; i++) {
-            try {
-                check.invoke(null, new Http.Response(503, bodies[i], 0), 200);
-                throw new AssertionError("unavailable relay accepted");
-            } catch (java.lang.reflect.InvocationTargetException error) {
-                String expected = i == 0 ? "O servidor ainda não foi configurado para conectar ao Spotify."
-                    : "O relay não está disponível. Confira o endereço e tente novamente.";
-                require(expected.equals(error.getCause().getMessage()), "relay configuration error hidden or proxy details exposed");
+    private static Http.Response deviceResponse() {
+        return new Http.Response(200, "{\"device_code\":\"private-device-code\",\"user_code\":\"ABC123\",\"verification_uri\":\"https://spotify.com/pair\",\"expires_in\":600,\"interval\":5}", 0);
+    }
+
+    private void verifyDeviceAuthorization() throws Exception {
+        new SecureStore(getTargetContext()).remove("spotify_oauth");
+        java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
+        AtomicReference<String> failure = new AtomicReference<>();
+        CountDownLatch paired = new CountDownLatch(1), connected = new CountDownLatch(1);
+        AuthManager.Listener listener = new AuthManager.Listener() {
+            public void onPairing(String url, String code, long expiry) { paired.countDown(); }
+            public void onConnected() { connected.countDown(); }
+            public void onError(String message) { failure.set(message); }
+        };
+        try (AuthManager manager = new AuthManager(getTargetContext(), (method, url, body, type, bearer) -> {
+            require(url.startsWith("https://accounts.spotify.com/"), "wrong authority");
+            if (url.endsWith("/device/authorize")) return deviceResponse();
+            int count = requests.incrementAndGet();
+            if (count <= 2) return new Http.Response(400, "{\"error\":\"" + (count == 1 ? "authorization_pending" : "slow_down") + "\"}", 0);
+            if (count > 3) require(body.contains("grant_type=refresh_token"), "refresh was not independent of pairing");
+            return new Http.Response(200, "{\"access_token\":\"test-access\",\"refresh_token\":\"test-refresh\",\"expires_in\":60,\"scope\":\"streaming\",\"token_type\":\"Bearer\"}", 0);
+        })) {
+            manager.start(listener);
+            require(paired.await(5, TimeUnit.SECONDS), "device code not delivered");
+            java.lang.reflect.Field pairing = AuthManager.class.getDeclaredField("pairing"), attempt = AuthManager.class.getDeclaredField("attempt");
+            pairing.setAccessible(true); attempt.setAccessible(true);
+            Object flow = pairing.get(manager); long revision = attempt.getLong(manager);
+            java.lang.reflect.Method poll = AuthManager.class.getDeclaredMethod("poll", long.class, flow.getClass(), AuthManager.Listener.class);
+            poll.setAccessible(true);
+            poll.invoke(manager, revision, flow, listener);
+            require(!manager.isSignedIn(), "pending poll created credentials");
+            poll.invoke(manager, revision, flow, listener);
+            java.lang.reflect.Field interval = flow.getClass().getDeclaredField("interval"); interval.setAccessible(true);
+            require(interval.getLong(flow) == 10, "slow_down ignored");
+            poll.invoke(manager, revision, flow, listener);
+            require(connected.await(5, TimeUnit.SECONDS) && failure.get() == null, "device authorization did not complete");
+            require(manager.usesNativeCatalog() && manager.usesPlaybackOAuth(), "device grant was misclassified");
+            require("test-access".equals(manager.playbackAccessToken()), "device refresh failed");
+            require(requests.get() == 4, "token was not refreshed");
+            manager.cancel();
+            poll.invoke(manager, revision, flow, listener);
+            require(requests.get() == 4, "cancelled device code was polled");
+            try (AuthManager restored = new AuthManager(getTargetContext())) {
+                require(restored.usesNativeCatalog(), "device grant lost on restart");
+                restored.logout();
             }
+            manager.logout();
+        }
+        // Reject a substituted verification origin; its device code must never become a QR.
+        CountDownLatch rejected = new CountDownLatch(1);
+        try (AuthManager invalid = new AuthManager(getTargetContext(), (method, url, body, type, bearer) ->
+                new Http.Response(200, deviceResponse().body.replace("https://spotify.com/pair", "https://example.com/pair"), 0))) {
+            invalid.start(new AuthManager.Listener() {
+                public void onPairing(String url, String code, long expiry) { failure.set("untrusted QR accepted"); }
+                public void onConnected() { failure.set("untrusted grant accepted"); }
+                public void onError(String message) { rejected.countDown(); }
+            });
+            require(rejected.await(5, TimeUnit.SECONDS) && failure.get() == null, "verification origin was not checked");
         }
     }
 
@@ -275,27 +319,5 @@ public final class SmokeInstrumentation extends Instrumentation {
         if (view instanceof TextView) out.append(((TextView) view).getText()).append('\n');
         if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) out.append(text(((ViewGroup) view).getChildAt(i)));
         return out.toString();
-    }
-    private static String request(String address, String body, String header) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
-        connection.setConnectTimeout(5000); connection.setReadTimeout(5000);
-        connection.setInstanceFollowRedirects(false);
-        try {
-            if (body != null) {
-                connection.setRequestMethod("POST"); connection.setDoOutput(true);
-                connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-                connection.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
-            }
-            int status = connection.getResponseCode();
-            require(status >= 200 && status < 400, "phone HTTP " + status);
-            if (header != null) return connection.getHeaderField(header);
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-            byte[] chunk = new byte[4096];
-            try (java.io.InputStream input = connection.getInputStream()) {
-                int count;
-                while ((count = input.read(chunk)) != -1) buffer.write(chunk, 0, count);
-            }
-            return buffer.toString("UTF-8");
-        } finally { connection.disconnect(); }
     }
 }

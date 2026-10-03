@@ -35,6 +35,15 @@ final class NativePlayer implements AutoCloseable {
         if (!closed && handle != 0) nativeCommand(handle, command.toString());
     }
 
+    JSONObject read(String path) throws Exception {
+        if (Looper.myLooper() == Looper.getMainLooper()) throw new IllegalStateException("Use o worker de rede.");
+        final long current;
+        synchronized (this) { if (closed || handle == 0) throw new IllegalStateException("Player encerrado"); current = handle; }
+        JSONObject value = new JSONObject(nativeRead(current, path));
+        if (value.has("error")) throw new Exception(value.getString("error"));
+        return value;
+    }
+
     // Called by native worker threads; methods must keep their JNI names.
     @SuppressWarnings("unused")
     private void onNativeState(String json) {
@@ -152,5 +161,6 @@ final class NativePlayer implements AutoCloseable {
 
     private static native long nativeCreate(NativePlayer callback, String cacheDir);
     private static native void nativeCommand(long handle, String json);
+    private static native String nativeRead(long handle, String path);
     private static native void nativeDestroy(long handle);
 }

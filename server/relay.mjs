@@ -1,11 +1,6 @@
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { readFileSync } from 'node:fs';
-import { WebSocketServer } from 'ws';
-import { BrowserLogin, WEB_GRANT, PLAYBACK_GRANT } from './browser-login.mjs';
-const remoteHtml = readFileSync(new URL('./public/remote.html', import.meta.url), 'utf8');
-const remoteScript = readFileSync(new URL('./public/remote.js', import.meta.url), 'utf8');
 
 export const SCOPES = 'streaming user-read-private user-library-read playlist-read-private playlist-read-collaborative user-read-playback-state user-modify-playback-state user-read-recently-played';
 const random = (size = 32) => randomBytes(size).toString('base64url');
@@ -33,7 +28,7 @@ function page(title, description, content = '') {
 }
 
 // testOnly is constructor injection for node:test; the production CLI never reads overrides from env.
-export function createRelay({ publicUrl, clientId, browserLogin = false, testOnly = {} }) {
+export function createRelay({ publicUrl, clientId, testOnly = {} }) {
   const base = origin(publicUrl);
   if (clientId && !/^[a-f\d]{32}$/i.test(clientId)) throw new Error('Configure SPOTIFY_CLIENT_ID com o Client ID do seu aplicativo Spotify.');
   const authorizeUrl = testOnly.authorizeUrl || 'https://accounts.spotify.com/authorize';
@@ -48,7 +43,7 @@ export function createRelay({ publicUrl, clientId, browserLogin = false, testOnl
 
   function forget(id) {
     const session = sessions.get(id);
-    if (session) { states.delete(session.state); if (session.playback) states.delete(session.playback.state); session.remote?.close(); }
+    if (session) states.delete(session.state);
     sessions.delete(id);
   }
   function cleanup() {
@@ -101,19 +96,13 @@ export function createRelay({ publicUrl, clientId, browserLogin = false, testOnl
         return send(429, { error: 'rate_limited' });
       }
       if (req.headers.origin && req.headers.origin !== base) return send(403, { error: 'origin_mismatch' });
-      if (req.method === 'GET' && url.pathname === '/health') return send(200, { ok: true, spotifyConfigured: Boolean(clientId || browserLogin) });
-      if (req.method === 'GET' && url.pathname === '/') return send(200, page('Sua música, no carro.', (clientId || browserLogin)
+      if (req.method === 'GET' && url.pathname === '/health') return send(200, { ok: true, spotifyConfigured: Boolean(clientId) });
+      if (req.method === 'GET' && url.pathname === '/') return send(200, page('Sua música, no carro.', clientId
         ? 'Abra o Impulsefy no carro e escaneie o QR para conectar seu Spotify.'
         : 'A conexão com o Spotify ainda não está disponível. Tente novamente mais tarde.'), true);
       // The deployment can be checked before configuration, but cannot issue login grants.
-      if (!clientId && !browserLogin) return send(503, { error: 'spotify_not_configured' });
-      if (req.method === 'GET' && url.pathname === '/remote.js' && browserLogin) {
-        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); return res.end(remoteScript);
-      }
-      if (req.method === 'GET' && url.pathname === '/v1/config' && url.searchParams.get('browser') === '1' && browserLogin) {
-        return send(200, { ...WEB_GRANT, mode: 'browser', playback: PLAYBACK_GRANT });
-      }
-      if (req.method === 'GET' && url.pathname === '/v1/config') return clientId ? send(200, { clientId, redirectUri, scopes: SCOPES }) : send(426, { error: 'update_app' });
+      if (!clientId) return send(503, { error: 'spotify_not_configured' });
+      if (req.method === 'GET' && url.pathname === '/v1/config') return send(200, { clientId, redirectUri, scopes: SCOPES });
       if (req.method === 'POST' && url.pathname === '/v1/pair') {
         if (++rate.creates > createLimit) {
           res.setHeader('Retry-After', '60');
@@ -121,20 +110,15 @@ export function createRelay({ publicUrl, clientId, browserLogin = false, testOnl
         }
         if (!req.headers['content-type']?.startsWith('application/json')) return send(415, { error: 'content_type' });
         const input = await readBody(req);
-        if (!input || typeof input !== 'object' || Object.keys(input).some(k => !['challenge', 'state', 'mode', 'playback'].includes(k)) || typeof input.challenge !== 'string' || typeof input.state !== 'string' || !/^[A-Za-z\d_-]{43}$/.test(input.challenge) || !/^[A-Za-z\d_-]{43}$/.test(input.state)) return send(400, { error: 'invalid_request' });
-        const remote = input.mode === 'browser';
-        if ((input.mode && !remote) || (!remote && input.playback) || (remote && (!browserLogin || !input.playback || Object.keys(input.playback).some(k => !['state', 'challenge'].includes(k)) || !/^[A-Za-z\d_-]{43}$/.test(input.playback.state) || !/^[A-Za-z\d_-]{43}$/.test(input.playback.challenge) || input.state === input.playback.state))) return send(400, { error: 'invalid_request' });
-        if (!remote && !clientId) return send(426, { error: 'update_app' });
-        if (remote && states.has(input.playback.state)) return send(409, { error: 'state_reused' });
+        if (!input || typeof input !== 'object' || Object.keys(input).some(k => !['challenge', 'state'].includes(k)) || typeof input.challenge !== 'string' || typeof input.state !== 'string' || !/^[A-Za-z\d_-]{43}$/.test(input.challenge) || !/^[A-Za-z\d_-]{43}$/.test(input.state)) return send(400, { error: 'invalid_request' });
         if (states.has(input.state)) return send(409, { error: 'state_reused' });
         if (sessions.size >= capacity) return send(503, { error: 'busy' });
         const id = random(24);
         const pollSecret = random();
         const displayCode = randomBytes(4).toString('hex').toUpperCase().replace(/(.{4})/, '$1-');
-        const session = { ...input, pollSecret, displayCode, consent: random(), expiresAt: Date.now() + (remote ? (testOnly.ttlMs ?? 9 * 60_000) : ttl), started: false };
+        const session = { ...input, pollSecret, displayCode, consent: random(), expiresAt: Date.now() + ttl, started: false };
         sessions.set(id, session);
         states.set(session.state, id);
-        if (remote) states.set(session.playback.state, id);
         return send(201, { id, pollSecret, displayCode, expiresAt: session.expiresAt, url: `${base}/pair/${id}` });
       }
       const apiMatch = /^\/v1\/pair\/([A-Za-z\d_-]{32})$/.exec(url.pathname);
@@ -147,32 +131,19 @@ export function createRelay({ publicUrl, clientId, browserLogin = false, testOnl
         forget(apiMatch[1]); // One authenticated consumer; never return the code twice.
         return send(200, { ...result, state: session.state });
       }
-      const pairMatch = /^\/pair\/([A-Za-z\d_-]{32})(\/authorize|\/browser)?$/.exec(url.pathname);
+      const pairMatch = /^\/pair\/([A-Za-z\d_-]{32})(\/authorize)?$/.exec(url.pathname);
       if (pairMatch) {
         const session = sessions.get(pairMatch[1]);
         if (!session || session.result) return send(410, page('Este QR já expirou', 'Gere um novo QR na tela do carro para continuar.'), true);
-        if (req.method === 'GET' && pairMatch[2] === '/browser' && session.mode === 'browser' && session.started) {
-          if (!browserCookie(req, session)) return send(403, { error: 'browser_session_required' });
-          res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'");
-          return send(200, remoteHtml, true);
-        }
         if (req.method === 'GET' && !pairMatch[2]) {
           if (session.started) return send(409, page('Login em andamento', 'Conclua a autorização na aba do Spotify ou gere outro QR no carro.'), true);
-          return send(200, page('Sua música, no carro.', 'Confira se este código é igual ao da tela do carro. Depois, conecte sua conta Spotify.', `<div class="label">Código de confirmação</div><div class="code">${session.displayCode}</div><form method="post" action="/pair/${pairMatch[1]}/authorize"><input type="hidden" name="consent" value="${session.consent}"><button type="submit">Confirmar e conectar Spotify →</button></form><p class="note">Use este QR apenas se você iniciou o login no carro. ${session.mode === 'browser' ? 'Você controla uma sessão temporária do Spotify neste servidor. Sua digitação passa por ele; a sessão e os cookies são apagados ao terminar. Serão duas autorizações: biblioteca e áudio. Nenhum Client ID é necessário.' : 'Sua senha é digitada somente no Spotify.'} O QR expira em poucos minutos.</p>`), true);
+          return send(200, page('Sua música, no carro.', 'Confira se este código é igual ao da tela do carro. Depois, conecte sua conta Spotify.', `<div class="label">Código de confirmação</div><div class="code">${session.displayCode}</div><form method="post" action="/pair/${pairMatch[1]}/authorize"><input type="hidden" name="consent" value="${session.consent}"><button type="submit">Confirmar e conectar Spotify →</button></form><p class="note">Use este QR apenas se você iniciou o login no carro. Sua senha é digitada somente no Spotify. O QR expira em poucos minutos.</p>`), true);
         }
-        if (req.method === 'POST' && pairMatch[2] === '/authorize') {
+        if (req.method === 'POST' && pairMatch[2]) {
           if (!req.headers['content-type']?.startsWith('application/x-www-form-urlencoded')) return send(415, { error: 'content_type' });
           const body = await readBody(req, false);
           if (body.getAll('consent').length !== 1 || !equal(body.get('consent'), session.consent)) return send(403, { error: 'invalid_confirmation' });
           if (session.started) return send(409, { error: 'already_started' });
-          if (session.mode === 'browser') {
-            const active = [...sessions.values()].filter(s => s.remote && !s.remote.closed).length;
-            if (active >= 3) return send(503, page('Todos os acessos estão ocupados', 'Aguarde um minuto e tente confirmar novamente.'), true);
-            session.browserSecret = random(); session.started = true;
-            session.remote = new BrowserLogin([{ ...WEB_GRANT, state: session.state, challenge: session.challenge }, { ...PLAYBACK_GRANT, ...session.playback }], result => { if (sessions.has(pairMatch[1])) session.result = result; }, testOnly);
-            res.setHeader('Set-Cookie', `impulsefy_browser=${session.browserSecret}; HttpOnly; SameSite=Strict; Path=/pair/${pairMatch[1]}/browser; Max-Age=540${base.startsWith('https:') ? '; Secure' : ''}`);
-            res.writeHead(303, { Location: `/pair/${pairMatch[1]}/browser` }); return res.end();
-          }
           session.started = true;
           const target = new URL(authorizeUrl);
           target.search = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: redirectUri, code_challenge_method: 'S256', code_challenge: session.challenge, state: session.state, scope: SCOPES }).toString();
@@ -186,7 +157,7 @@ export function createRelay({ publicUrl, clientId, browserLogin = false, testOnl
         const session = sessions.get(id);
         const code = url.searchParams.get('code');
         const error = url.searchParams.get('error');
-        if (!session || session.mode === 'browser' || !session.started || session.result || url.searchParams.getAll('state').length !== 1 || !equal(state, session.state) || (code && error) || (!code && !error) || url.searchParams.getAll('code').length > 1 || url.searchParams.getAll('error').length > 1 || (code && (code.length > 2048 || /[\x00-\x20\x7f]/.test(code)))) {
+        if (!session || !session.started || session.result || url.searchParams.getAll('state').length !== 1 || !equal(state, session.state) || (code && error) || (!code && !error) || url.searchParams.getAll('code').length > 1 || url.searchParams.getAll('error').length > 1 || (code && (code.length > 2048 || /[\x00-\x20\x7f]/.test(code)))) {
           return send(400, page('Não foi possível conectar', 'Esta autorização é inválida ou já foi usada. Gere um novo QR no carro.'), true);
         }
         session.result = error ? { error: 'access_denied' } : { code };
@@ -197,35 +168,19 @@ export function createRelay({ publicUrl, clientId, browserLogin = false, testOnl
       if (!res.headersSent && !res.destroyed) send(error.status || 500, { error: error.status === 413 ? 'too_large' : 'invalid_request' });
     }
   });
-  function browserCookie(req, session) {
-    const cookies = (req.headers.cookie || '').split(';').map(v => v.trim()).filter(v => v.startsWith('impulsefy_browser='));
-    return cookies.length === 1 && equal(cookies[0].slice('impulsefy_browser='.length), session.browserSecret);
-  }
-  const sockets = new WebSocketServer({ noServer: true, maxPayload: 4096, perMessageDeflate: false });
-  server.on('upgrade', (req, socket, head) => {
-    cleanup();
-    const match = /^\/pair\/([A-Za-z\d_-]{32})\/browser\/socket$/.exec(req.url || '');
-    const session = match && sessions.get(match[1]);
-    if (req.headers.origin !== base || !session?.remote || session.result || !browserCookie(req, session) || session.remote.socket) {
-      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return;
-    }
-    sockets.handleUpgrade(req, socket, head, ws => session.remote.attach(ws));
-  });
-  const close = server.close.bind(server);
-  server.close = callback => { for (const session of sessions.values()) session.remote?.close(); return close(callback); };
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
   server.keepAliveTimeout = 5000;
   server.maxRequestsPerSocket = 100;
   // Expired codes also disappear while the relay is idle.
   const sweeper = setInterval(cleanup, 30_000).unref();
-  server.on('close', () => { clearInterval(sweeper); for (const id of sessions.keys()) forget(id); sockets.close(); states.clear(); rates.clear(); });
+  server.on('close', () => { clearInterval(sweeper); sessions.clear(); states.clear(); rates.clear(); });
   return server;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const server = createRelay({ publicUrl: process.env.PUBLIC_URL, clientId: process.env.SPOTIFY_CLIENT_ID, browserLogin: process.env.BROWSER_LOGIN === '1' });
+    const server = createRelay({ publicUrl: process.env.PUBLIC_URL, clientId: process.env.SPOTIFY_CLIENT_ID });
     const port = Number(process.env.PORT || 8787);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT inválida.');
     server.listen(port, '0.0.0.0', () => console.log(`Impulsefy relay listening on ${port}`));

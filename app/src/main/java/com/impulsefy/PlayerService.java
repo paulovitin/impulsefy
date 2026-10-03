@@ -41,7 +41,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
     private JSONObject state = emptyState();
     private Listener listener;
     private String pendingCredential;
-    private NativePlayer player;
+    private volatile NativePlayer player;
     private AudioManager audioManager;
     private MediaSession session;
     private boolean foreground;
@@ -107,7 +107,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
         onMain(() -> { listener = next; if (next != null) { JSONObject value = snapshot(); if (pendingCredential != null) { put(value, "credential", pendingCredential); pendingCredential = null; } next.onPlayerState(value); } });
     }
 
-    public void connect(String accessToken, String credentialJson, String deviceId, boolean playbackOAuth, String username) {
+    public void connect(String accessToken, String credentialJson, String deviceId, boolean playbackOAuth, String username, boolean nativeSession) {
         onMain(() -> {
             if (destroyed) return;
             startService(new Intent(this, PlayerService.class));
@@ -134,6 +134,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
                 put(command, "credential", credentialJson == null ? "" : credentialJson);
                 put(command, "device_id", deviceId == null ? "" : deviceId);
                 put(command, "playback_oauth", playbackOAuth);
+                put(command, "native_session", nativeSession);
                 put(command, "username", username == null ? "" : username);
                 send(command);
             } catch (RuntimeException | LinkageError failure) {
@@ -141,6 +142,12 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
                 error("O mecanismo de áudio não iniciou: " + failure.getMessage());
             }
         });
+    }
+
+    public JSONObject read(String path) throws Exception {
+        NativePlayer current = player;
+        if (destroyed || current == null) throw new Exception("Conectando ao Spotify. Tente novamente em instantes.");
+        return current.read(path);
     }
 
     public void play(List<String> uris, int index) {
