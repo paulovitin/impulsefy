@@ -6,8 +6,8 @@ no Impulse Home, reprodução local com librespot e login pelo celular via QR.
 ## Android
 
 Mesmos SDKs do `impulse-home`: **compileSdk 36, minSdk 23, targetSdk 28**.
-Java e Views nativas, sem WebView. A fonte é DM Sans; as cores e os cartões
-seguem o tema escuro do launcher. O áudio usa AudioTrack e MediaSession.
+Java e Views nativas, sem WebView. A fonte é Inter; as cores e os cartões
+seguem a referência visual de `impulsefy.pen`. O áudio usa AudioTrack e MediaSession.
 
 Pré-requisitos: JDK 17, Android SDK 36, Build Tools 36.0.0, NDK
 27.2.12479018, Rust e Node 22 ou mais novo para os testes da ponte.
@@ -60,7 +60,7 @@ sem simular áudio real.
 - [Spotifast](https://github.com/crmne/spotifast): referência para autenticação e arquitetura.
 - [librespot](https://github.com/librespot-org/librespot): cliente e decodificação de áudio, licença MIT.
 - [ZXing](https://github.com/zxing/zxing): geração local do QR, Apache 2.0.
-- [DM Sans](https://github.com/google/fonts/tree/main/ofl/dmsans): fonte, SIL OFL (incluída nos assets).
+- [Inter](https://github.com/google/fonts/tree/main/ofl/inter): fonte, SIL OFL (incluída nos assets).
 
 Estado das verificações e limites de validação: [tasks/todo.md](tasks/todo.md).
 

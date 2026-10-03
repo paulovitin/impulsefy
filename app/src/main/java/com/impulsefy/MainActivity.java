@@ -20,10 +20,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.text.InputType;
-import android.text.SpannableString;
-import android.text.Spanned;
 import android.text.TextUtils;
-import android.text.style.ForegroundColorSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -37,7 +34,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -63,8 +59,8 @@ import java.util.concurrent.Executors;
 
 /** A native, landscape Spotify surface with no embedded browser or UI framework. */
 public final class MainActivity extends Activity {
-    private static final int BG = 0xff080c12, CARD = 0xff10151c, TEXT = 0xffeaf2f8;
-    private static final int MUTED = 0xff939ca7, ACCENT = 0xff4fd6e8, BORDER = 0x2effffff;
+    private static final int BG = 0xff090d11, CARD = 0xff171f27, TEXT = 0xfff1f5f7;
+    private static final int MUTED = 0xffa2aeb8, ACCENT = 0xff85ece2;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService network = Executors.newFixedThreadPool(2);
     private final List<Row> rows = new ArrayList<>();
@@ -85,7 +81,8 @@ public final class MainActivity extends Activity {
     private JSONObject playerState = new JSONObject();
     private long stateAt, pairingExpiresAt;
     private volatile int pairingGeneration;
-    private LinearLayout center;
+    private LinearLayout center, loginSteps;
+    private FrameLayout qrFrame;
     private TextView pageTitle, pageSubtitle, listLabel, status, account, clock, previewBadge;
     private TextView playerTitle, playerArtist, playerStatus, elapsed, duration, qrStatus, qrCode;
     private ImageView cover, qrImage;
@@ -135,8 +132,9 @@ public final class MainActivity extends Activity {
         immersive();
         compact = getResources().getConfiguration().screenHeightDp < 500;
         preferences = getSharedPreferences("impulsefy_ui", MODE_PRIVATE);
-        regular = Typeface.createFromAsset(getAssets(), "fonts/dm-sans.ttf");
-        medium = Typeface.create(regular, Typeface.BOLD);
+        Typeface inter = Typeface.createFromAsset(getAssets(), "fonts/inter.ttf");
+        regular = Build.VERSION.SDK_INT >= 28 ? Typeface.create(inter, 500, false) : inter;
+        medium = regular;
         artwork = new Artwork(this);
         configureAuth(preferences.getString("relay", BuildConfig.RELAY_URL));
         demo = BuildConfig.DEBUG && getIntent().getBooleanExtra("demo", false);
@@ -179,66 +177,63 @@ public final class MainActivity extends Activity {
 
     private void showLogin() {
         mainScreen = false; demo = false; pairingExpiresAt = 0; generation++;
-        navigation.clear(); clock = null;
-        LinearLayout root = horizontal(); root.setPadding(dp(36), dp(24), dp(36), dp(24)); root.setBackgroundColor(BG);
-        LinearLayout hero = vertical(); hero.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams heroParams = new LinearLayout.LayoutParams(0, -1, 1.05f); heroParams.rightMargin = dp(44);
-        root.addView(hero, heroParams);
-        LinearLayout loginBrand = brand(); loginBrand.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
-        loginBrand.addView(iconButton("settings", "Alterar endereço de conexão", false, v -> connectionAddress(false)), new LinearLayout.LayoutParams(dp(48), dp(48)));
-        hero.addView(loginBrand, new LinearLayout.LayoutParams(-1, dp(52)));
-        hero.addView(space(compact ? 12 : 32));
-        TextView eyebrow = label("FEITO PARA O SEU CAMINHO", 11, ACCENT); eyebrow.setLetterSpacing(.12f);
-        hero.addView(eyebrow);
-        TextView headline = label("Sua música.\nSeu caminho.", compact ? 34 : 46, TEXT);
-        headline.setTypeface(medium); headline.setLineSpacing(0, 1.02f);
-        LinearLayout.LayoutParams headlineParams = new LinearLayout.LayoutParams(-1, -2); headlineParams.topMargin = dp(12);
-        hero.addView(headline, headlineParams);
-        TextView description = label("Seu Spotify na tela do carro.\nConecte pelo celular e leve suas playlists.", 16, MUTED);
-        description.setLineSpacing(dp(4), 1);
-        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(-1, -2); descriptionParams.topMargin = dp(18);
-        hero.addView(description, descriptionParams);
-        hero.addView(space(compact ? 18 : 30));
-        hero.addView(step("01", "Escaneie o QR com seu celular"));
-        hero.addView(step("02", "Entre na sua conta Spotify"));
-        hero.addView(step("03", "Escolha a trilha da viagem"));
-        TextView premium = label("Reprodução com Spotify Premium", 12, MUTED);
-        LinearLayout.LayoutParams premiumParams = new LinearLayout.LayoutParams(-1, -2); premiumParams.topMargin = dp(16);
-        hero.addView(premium, premiumParams);
+        navigation.clear();
+        LinearLayout root = vertical(); root.setPadding(dp(32), dp(20), dp(32), dp(20)); root.setBackgroundColor(BG);
+        LinearLayout heading = horizontal(); heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.addView(brand(), new LinearLayout.LayoutParams(0, -2, 1));
+        heading.addView(label("Configure com o carro parado", 11, MUTED));
+        clock = label(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()), 18, TEXT);
+        LinearLayout.LayoutParams clockParams = new LinearLayout.LayoutParams(-2, -2); clockParams.leftMargin = dp(16); heading.addView(clock, clockParams);
+        heading.addView(iconButton("settings", "Alterar endereço de conexão", false, v -> connectionAddress(false)), new LinearLayout.LayoutParams(dp(48), dp(40)));
+        root.addView(heading, new LinearLayout.LayoutParams(-1, dp(40)));
+        LinearLayout body = horizontal(); LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(-1, 0, 1); bodyParams.topMargin = dp(14); root.addView(body, bodyParams);
 
-        LinearLayout panel = vertical(); panel.setPadding(dp(24), dp(18), dp(24), dp(18));
-        panel.setGravity(Gravity.CENTER_HORIZONTAL); panel.setBackground(shape(CARD, BORDER, 16));
-        LinearLayout.LayoutParams panelParams = new LinearLayout.LayoutParams(0, -1, 1); root.addView(panel, panelParams);
-        TextView connectTitle = label("Vamos conectar?", compact ? 23 : 27, TEXT); connectTitle.setTypeface(medium);
-        panel.addView(connectTitle);
-        TextView connectSubtitle = label("É rápido. E você só precisa fazer uma vez.", 13, MUTED);
-        connectSubtitle.setGravity(Gravity.CENTER); connectSubtitle.setPadding(0, dp(7), 0, dp(10)); panel.addView(connectSubtitle);
-        FrameLayout qrFrame = new FrameLayout(this);
+        LinearLayout panel = vertical(); panel.setPadding(dp(24), dp(24), dp(24), dp(20)); panel.setBackground(shape(CARD, 0, 16));
+        int panelWidth = Math.min(400, (int) (getResources().getConfiguration().screenWidthDp * .42f));
+        body.addView(panel, new LinearLayout.LayoutParams(dp(panelWidth), -1));
+        TextView title = label("Conecte. Dê play. Vá.", compact ? 23 : 28, TEXT); panel.addView(title);
+        TextView subtitle = label("Só uma vez. Tudo pelo seu celular.", 13, MUTED); subtitle.setPadding(0, dp(8), 0, dp(10)); panel.addView(subtitle);
+        loginSteps = vertical(); loginSteps.setGravity(Gravity.CENTER_VERTICAL);
+        loginSteps.addView(step("01", "Gere seu QR code", "Toque no botão abaixo para começar."));
+        loginSteps.addView(step("02", "Conecte pelo celular", "Escaneie e entre na sua conta Spotify."));
+        loginSteps.addView(step("03", "Pronto para a estrada", "Suas playlists aparecem aqui."));
+        panel.addView(loginSteps, new LinearLayout.LayoutParams(-1, 0, 1));
+        qrFrame = new FrameLayout(this); qrFrame.setVisibility(View.GONE);
         panel.addView(qrFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         qrImage = new ImageView(this); qrImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        qrImage.setImageDrawable(new Artwork.Placeholder(0));
-        FrameLayout.LayoutParams qrParams = new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER);
-        qrFrame.addView(qrImage, qrParams); qrImage.setContentDescription("Ilustração de música");
-        qrCode = label("SEU SPOTIFY. SEU IMPULSE.", 11, ACCENT); qrCode.setLetterSpacing(.1f);
-        qrCode.setGravity(Gravity.CENTER); qrCode.setPadding(0, dp(9), 0, dp(5)); panel.addView(qrCode);
-        qrStatus = label("Toque abaixo para gerar seu QR de conexão.", 12, MUTED);
-        qrStatus.setGravity(Gravity.CENTER); qrStatus.setMinHeight(dp(28)); panel.addView(qrStatus);
+        final ImageView qrView = qrImage;
+        qrFrame.addView(qrImage, new FrameLayout.LayoutParams(dp(160), dp(160), Gravity.CENTER));
+        qrFrame.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            int size = Math.min(dp(160), Math.min(r - l, b - t));
+            if (size > 0 && qrView.getLayoutParams().width != size) qrView.setLayoutParams(new FrameLayout.LayoutParams(size, size, Gravity.CENTER));
+        });
+        qrCode = label("", 11, ACCENT); qrCode.setGravity(Gravity.CENTER); qrCode.setPadding(0, dp(5), 0, dp(5)); qrCode.setVisibility(View.GONE); panel.addView(qrCode);
+        qrStatus = label("", 11, MUTED); qrStatus.setGravity(Gravity.CENTER); qrStatus.setMaxLines(2); panel.addView(qrStatus);
         pairingButton = button("Conectar Spotify", true, v -> startPairing());
-        LinearLayout.LayoutParams connectParams = new LinearLayout.LayoutParams(-1, dp(50)); connectParams.topMargin = dp(10);
-        panel.addView(pairingButton, connectParams);
+        LinearLayout.LayoutParams connectParams = new LinearLayout.LayoutParams(-1, dp(48)); connectParams.topMargin = dp(12); panel.addView(pairingButton, connectParams);
         Button preview = button("Conhecer a interface", false, v -> { auth.cancel(); pairingGeneration++; demo = true; showMain(); });
-        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(-1, dp(48)); previewParams.topMargin = dp(6);
-        panel.addView(preview, previewParams);
+        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(-1, dp(42)); previewParams.topMargin = dp(8); panel.addView(preview, previewParams);
+
+        LinearLayout hero = vertical(); hero.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams heroParams = new LinearLayout.LayoutParams(0, -1, 1); heroParams.leftMargin = dp(32); body.addView(hero, heroParams);
+        TextView eyebrow = label("BEM-VINDO A BORDO", 10, ACCENT); hero.addView(eyebrow);
+        TextView headline = label("Sua música.\nSeu caminho.", compact ? 39 : 48, TEXT); headline.setLineSpacing(0, 1.04f);
+        LinearLayout.LayoutParams headlineParams = new LinearLayout.LayoutParams(-1, -2); headlineParams.topMargin = dp(16); hero.addView(headline, headlineParams);
+        TextView description = label("Seu Spotify simplificado para o carro.\nSuas músicas, sem complicação.", 15, 0xffb0bec7);
+        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(-1, -2); descriptionParams.topMargin = dp(15); hero.addView(description, descriptionParams);
+        ImageView scenery = new ImageView(this); scenery.setScaleType(ImageView.ScaleType.CENTER_CROP); scenery.setImageResource(R.drawable.coastal_road);
+        scenery.setBackground(shape(CARD, 0, 12)); scenery.setClipToOutline(true); scenery.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams sceneryParams = new LinearLayout.LayoutParams(-1, dp(compact ? 110 : 150)); sceneryParams.topMargin = dp(16); hero.addView(scenery, sceneryParams);
+        TextView premium = label("Reprodução com Spotify Premium.", 10, MUTED); premium.setPadding(0, dp(12), 0, 0); hero.addView(premium);
         setContentView(root);
     }
 
-    private View step(String number, String copy) {
-        LinearLayout row = horizontal(); row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView index = label(number, 11, ACCENT); index.setGravity(Gravity.CENTER);
-        index.setBackground(shape(0x134fd6e8, 0x304fd6e8, 8));
-        LinearLayout.LayoutParams indexParams = new LinearLayout.LayoutParams(dp(30), dp(30)); indexParams.rightMargin = dp(12);
-        row.addView(index, indexParams); row.addView(label(copy, 14, TEXT));
-        row.setPadding(0, dp(4), 0, dp(4)); return row;
+    private View step(String number, String title, String description) {
+        LinearLayout row = horizontal(); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(0, dp(6), 0, dp(6));
+        TextView index = label(number, 11, ACCENT); index.setGravity(Gravity.CENTER); index.setBackground(shape(0xff294044, 0, 20));
+        LinearLayout.LayoutParams indexParams = new LinearLayout.LayoutParams(dp(34), dp(34)); indexParams.rightMargin = dp(12); row.addView(index, indexParams);
+        LinearLayout copy = vertical(); copy.addView(label(title, 15, TEXT)); TextView detail = label(description, 11, MUTED); detail.setPadding(0, dp(4), 0, 0); copy.addView(detail);
+        row.addView(copy, new LinearLayout.LayoutParams(0, -2, 1)); return row;
     }
 
     private void startPairing() {
@@ -257,6 +252,7 @@ public final class MainActivity extends Activity {
                         if (bitmap == null) {
                             qrStatus.setText("Não foi possível exibir o QR. Tente novamente."); pairingButton.setText("Tentar novamente"); pairingButton.setEnabled(true); return;
                         }
+                        loginSteps.setVisibility(View.GONE); qrFrame.setVisibility(View.VISIBLE); qrCode.setVisibility(View.VISIBLE);
                         qrImage.setImageBitmap(bitmap); qrImage.setBackground(shape(Color.WHITE, Color.WHITE, 10)); qrImage.setContentDescription("QR para conectar sua conta Spotify");
                         qrCode.setText(code == null || code.isEmpty() ? "ABRA A CÂMERA DO CELULAR" : "CÓDIGO  " + code);
                         qrStatus.setText("Escaneie com a câmera do celular para continuar.");
@@ -294,42 +290,34 @@ public final class MainActivity extends Activity {
     private void showMain() {
         mainScreen = true; pairingExpiresAt = 0; playlistScreen = false;
         LinearLayout root = horizontal(); root.setBackgroundColor(BG);
-        LinearLayout rail = vertical(); rail.setPadding(dp(17), dp(21), dp(14), dp(16));
-        int railWidth = getResources().getConfiguration().screenWidthDp < 900 ? 154 : 180;
-        root.addView(rail, new LinearLayout.LayoutParams(dp(railWidth), -1));
-        rail.addView(brand(), new LinearLayout.LayoutParams(-1, dp(42)));
-        TextView railSubtitle = label("O SEU SOM, EM MOVIMENTO", 8, MUTED); railSubtitle.setLetterSpacing(.1f); railSubtitle.setPadding(dp(4), dp(7), 0, 0);
-        rail.addView(railSubtitle); rail.addView(space(compact ? 24 : 40));
+        LinearLayout rail = vertical(); rail.setPadding(dp(10), dp(14), dp(10), dp(14)); rail.setGravity(Gravity.CENTER_HORIZONTAL); rail.setBackgroundColor(0xff10161c);
+        root.addView(rail, new LinearLayout.LayoutParams(dp(76), -1));
+        rail.addView(new GlyphView(this, "impulse", ACCENT), new LinearLayout.LayoutParams(dp(38), dp(36)));
+        rail.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1));
         navigation.clear();
         addNav(rail, "home", "Início", "home"); addNav(rail, "library", "Biblioteca", "library");
         addNav(rail, "search", "Buscar", "search"); addNav(rail, "liked", "Curtidas", "heart");
         rail.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1));
-        LinearLayout settings = horizontal(); settings.setGravity(Gravity.CENTER_VERTICAL);
-        settings.setBackground(ripple(Color.TRANSPARENT, 0, 10)); settings.setContentDescription("Configurações da conta");
-        GlyphView settingsIcon = new GlyphView(this, "settings", MUTED); settings.addView(settingsIcon, new LinearLayout.LayoutParams(dp(40), dp(48)));
-        account = label(demo ? "Sair da prévia" : accountName, 12, MUTED); account.setMaxLines(2);
-        settings.addView(account, new LinearLayout.LayoutParams(0, -2, 1)); settings.setOnClickListener(v -> settings());
-        rail.addView(settings, new LinearLayout.LayoutParams(-1, dp(52)));
-        View divider = new View(this); divider.setBackgroundColor(0x16ffffff); root.addView(divider, new LinearLayout.LayoutParams(dp(1), -1));
+        LinearLayout settings = vertical(); settings.setGravity(Gravity.CENTER);
+        settings.setBackground(ripple(Color.TRANSPARENT, 0, 12)); settings.setContentDescription("Configurações da conta");
+        settings.addView(new GlyphView(this, "settings", MUTED), new LinearLayout.LayoutParams(dp(36), dp(40)));
+        account = label(demo ? "Sair da prévia" : accountName, 9, MUTED); account.setMaxLines(1); account.setEllipsize(TextUtils.TruncateAt.END); account.setGravity(Gravity.CENTER);
+        settings.addView(account, new LinearLayout.LayoutParams(-1, -2)); settings.setOnClickListener(v -> settings()); rail.addView(settings, new LinearLayout.LayoutParams(-1, dp(56)));
 
-        LinearLayout work = vertical(); work.setPadding(dp(22), dp(20), dp(22), dp(20));
-        root.addView(work, new LinearLayout.LayoutParams(0, -1, 1));
-        LinearLayout heading = horizontal(); heading.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout titles = vertical(); heading.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
-        pageTitle = label("Boa viagem.", compact ? 27 : 32, TEXT); pageTitle.setTypeface(medium); titles.addView(pageTitle);
-        pageSubtitle = label("Sua música acompanha o caminho.", 13, MUTED); pageSubtitle.setPadding(0, dp(4), 0, 0); titles.addView(pageSubtitle);
-        previewBadge = label(demo ? "PRÉVIA" : "SPOTIFY", 10, demo ? ACCENT : MUTED); previewBadge.setLetterSpacing(.12f);
-        previewBadge.setPadding(dp(12), dp(8), dp(12), dp(8)); previewBadge.setBackground(shape(demo ? 0x114fd6e8 : 0x08ffffff, BORDER, 7));
-        heading.addView(previewBadge);
+        LinearLayout work = vertical(); work.setPadding(dp(22), dp(16), dp(22), dp(18)); root.addView(work, new LinearLayout.LayoutParams(0, -1, 1));
+        LinearLayout heading = horizontal(); heading.setGravity(Gravity.CENTER_VERTICAL); heading.addView(brand(), new LinearLayout.LayoutParams(0, -2, 1));
+        previewBadge = label(demo ? "PRÉVIA" : "SPOTIFY", 10, demo ? ACCENT : MUTED); previewBadge.setLetterSpacing(.1f); heading.addView(previewBadge);
         clock = label(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()), 18, TEXT);
         LinearLayout.LayoutParams clockParams = new LinearLayout.LayoutParams(-2, -2); clockParams.leftMargin = dp(18); heading.addView(clock, clockParams);
-        work.addView(heading, new LinearLayout.LayoutParams(-1, dp(compact ? 58 : 68)));
-
-        LinearLayout panes = horizontal(); LinearLayout.LayoutParams panesParams = new LinearLayout.LayoutParams(-1, 0, 1); panesParams.topMargin = dp(15); work.addView(panes, panesParams);
-        center = vertical(); LinearLayout.LayoutParams centerParams = new LinearLayout.LayoutParams(0, -1, 1.24f); centerParams.rightMargin = dp(16); panes.addView(center, centerParams);
-        LinearLayout nowPlaying = makePlayer(); panes.addView(nowPlaying, new LinearLayout.LayoutParams(0, -1, 1));
-        setContentView(root);
-        openScreen(selected);
+        work.addView(heading, new LinearLayout.LayoutParams(-1, dp(30)));
+        LinearLayout panes = horizontal(); LinearLayout.LayoutParams panesParams = new LinearLayout.LayoutParams(-1, 0, 1); panesParams.topMargin = dp(14); work.addView(panes, panesParams);
+        int playerWidth = getResources().getConfiguration().screenWidthDp < 900 ? 250 : 324;
+        panes.addView(makePlayer(), new LinearLayout.LayoutParams(dp(playerWidth), -1));
+        LinearLayout content = vertical(); LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(0, -1, 1); contentParams.leftMargin = dp(20); panes.addView(content, contentParams);
+        pageTitle = label("Boa viagem.", compact ? 26 : 32, TEXT); pageTitle.setSingleLine(true); pageTitle.setEllipsize(TextUtils.TruncateAt.END); content.addView(pageTitle, new LinearLayout.LayoutParams(-1, -2));
+        pageSubtitle = label("Sua música acompanha o caminho.", 13, MUTED); pageSubtitle.setSingleLine(true); pageSubtitle.setEllipsize(TextUtils.TruncateAt.END); pageSubtitle.setPadding(0, dp(5), 0, dp(16)); content.addView(pageSubtitle);
+        center = vertical(); content.addView(center, new LinearLayout.LayoutParams(-1, 0, 1));
+        setContentView(root); openScreen(selected);
         if (!mainScreen) return;
         if (demo) renderDemoPlayer(); else { ensurePlayerService(); acceptPlayerState(player == null ? new JSONObject() : player.snapshot()); loadProfile(); connectPlayer(); }
     }
@@ -349,27 +337,27 @@ public final class MainActivity extends Activity {
     }
 
     private void addNav(LinearLayout rail, String key, String title, String glyph) {
-        LinearLayout row = horizontal(); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(8), 0, dp(8), 0);
-        GlyphView icon = new GlyphView(this, glyph, MUTED); row.addView(icon, new LinearLayout.LayoutParams(dp(34), dp(48)));
-        TextView text = label(title, 15, MUTED); text.setPadding(dp(8), 0, 0, 0); row.addView(text);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(52)); params.bottomMargin = dp(6); rail.addView(row, params);
+        LinearLayout row = vertical(); row.setGravity(Gravity.CENTER);
+        row.addView(new GlyphView(this, glyph, MUTED), new LinearLayout.LayoutParams(dp(32), dp(32)));
+        TextView text = label(title, 9, MUTED); text.setGravity(Gravity.CENTER); text.setPadding(0, dp(3), 0, 0); row.addView(text);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(58)); params.bottomMargin = dp(8); rail.addView(row, params);
         row.setOnClickListener(v -> openScreen(key)); row.setContentDescription(title); navigation.put(key, row);
     }
 
     private LinearLayout makePlayer() {
         LinearLayout panel = vertical(); panel.setPadding(dp(18), dp(compact ? 12 : 16), dp(18), dp(12)); panel.setGravity(Gravity.CENTER_HORIZONTAL);
-        panel.setBackground(shape(CARD, BORDER, 12));
+        panel.setBackground(shape(CARD, 0, 16));
         LinearLayout caption = horizontal(); caption.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = label("TOCANDO AGORA", 10, MUTED); title.setLetterSpacing(.12f); caption.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView title = label("TOCANDO AGORA", 9, ACCENT); title.setLetterSpacing(.12f); caption.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         GlyphView signal = new GlyphView(this, "signal", ACCENT); caption.addView(signal, new LinearLayout.LayoutParams(dp(23), dp(compact ? 18 : 23))); panel.addView(caption, new LinearLayout.LayoutParams(-1, dp(compact ? 18 : 24)));
         FrameLayout artFrame = new FrameLayout(this);
         LinearLayout.LayoutParams artFrameParams = new LinearLayout.LayoutParams(-1, 0, 1); artFrameParams.topMargin = dp(compact ? 6 : 11); artFrameParams.bottomMargin = dp(compact ? 6 : 12); panel.addView(artFrame, artFrameParams);
-        cover = new ImageView(this); cover.setScaleType(ImageView.ScaleType.CENTER_CROP); cover.setBackground(shape(CARD, 0, 9)); cover.setClipToOutline(true);
+        cover = new ImageView(this); cover.setScaleType(ImageView.ScaleType.CENTER_CROP); cover.setBackground(shape(CARD, 0, 11)); cover.setClipToOutline(true);
         cover.setImageDrawable(new Artwork.Placeholder(0)); cover.setContentDescription("Capa da música atual");
-        int artSize = dp(compact ? 156 : 240);
+        int artSize = dp(compact ? 136 : 180);
         artFrame.addView(cover, new FrameLayout.LayoutParams(artSize, artSize, Gravity.CENTER));
         artFrame.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
-            int size = Math.min(r - l, b - t);
+            int size = Math.min(artSize, Math.min(r - l, b - t));
             if (size > 0 && cover.getLayoutParams().width != size) cover.setLayoutParams(new FrameLayout.LayoutParams(size, size, Gravity.CENTER));
         });
         playerTitle = label("O caminho pede música", compact ? 19 : 22, TEXT); playerTitle.setTypeface(medium);
@@ -406,7 +394,7 @@ public final class MainActivity extends Activity {
         selected = screen; playlistScreen = false; generation++; rows.clear(); nextPath = null;
         for (Map.Entry<String, View> entry : navigation.entrySet()) {
             boolean active = entry.getKey().equals(screen); LinearLayout row = (LinearLayout) entry.getValue();
-            row.setBackground(ripple(active ? 0x184fd6e8 : Color.TRANSPARENT, active ? 0x304fd6e8 : 0, 9));
+            row.setBackground(ripple(active ? 0xff223e40 : Color.TRANSPARENT, 0, 12));
             ((GlyphView) row.getChildAt(0)).setColor(active ? ACCENT : MUTED); ((TextView) row.getChildAt(1)).setTextColor(active ? TEXT : MUTED);
             row.setSelected(active);
         }
@@ -421,10 +409,10 @@ public final class MainActivity extends Activity {
         listHeader.addView(backButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         listLabel = label(search ? "RESULTADOS" : screen.equals("liked") ? "FEITAS PARA REPETIR" : "SUAS PLAYLISTS", 10, MUTED); listLabel.setLetterSpacing(.13f);
         listHeader.addView(listLabel, new LinearLayout.LayoutParams(0, -2, 1)); center.addView(listHeader, new LinearLayout.LayoutParams(-1, dp(39)));
-        LinearLayout listPanel = vertical(); listPanel.setBackground(shape(CARD, BORDER, 12)); listPanel.setPadding(dp(5), dp(5), dp(5), dp(5));
+        LinearLayout listPanel = vertical(); listPanel.setPadding(0, 0, 0, 0);
         center.addView(listPanel, new LinearLayout.LayoutParams(-1, 0, 1));
         FrameLayout body = new FrameLayout(this); listPanel.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
-        list = new ListView(this); list.setDivider(null); list.setSelector(ripple(0x184fd6e8, 0, 8)); list.setCacheColorHint(Color.TRANSPARENT);
+        list = new ListView(this); list.setDivider(new android.graphics.drawable.ColorDrawable(BG)); list.setDividerHeight(dp(8)); list.setSelector(ripple(0x2285ece2, 0, 12)); list.setCacheColorHint(Color.TRANSPARENT);
         list.setClipToPadding(false); list.setPadding(0, dp(2), 0, dp(2)); list.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
         adapter = new RowAdapter(); list.setAdapter(adapter); list.setOnItemClickListener((parent, view, position, id) -> rowSelected(position));
         body.addView(list, new FrameLayout.LayoutParams(-1, -1));
@@ -440,17 +428,19 @@ public final class MainActivity extends Activity {
     }
 
     private void addHomeBanner() {
-        LinearLayout banner = horizontal(); banner.setGravity(Gravity.CENTER_VERTICAL); banner.setPadding(dp(18), dp(14), dp(14), dp(14));
-        GradientDrawable gradient = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xff17343b, 0xff10222c}); gradient.setCornerRadius(dp(12)); gradient.setStroke(dp(1), 0x384fd6e8); banner.setBackground(gradient);
-        LinearLayout copy = vertical(); TextView eyebrow = label("PRONTO PARA PARTIR", 9, ACCENT); eyebrow.setLetterSpacing(.12f); copy.addView(eyebrow);
-        TextView title = label("A trilha é sua.", compact ? 22 : 26, TEXT); title.setTypeface(medium); title.setPadding(0, dp(6), 0, dp(2)); copy.addView(title);
-        copy.addView(label("Dê play no próximo caminho.", 12, MUTED)); banner.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
-        GlyphView music = new GlyphView(this, "music", ACCENT); banner.addView(music, new LinearLayout.LayoutParams(dp(58), dp(64)));
-        center.addView(banner, new LinearLayout.LayoutParams(-1, dp(compact ? 100 : 118)));
+        FrameLayout banner = new FrameLayout(this); banner.setBackground(shape(CARD, 0, 14)); banner.setClipToOutline(true);
+        ImageView photo = new ImageView(this); photo.setImageResource(R.drawable.coastal_road); photo.setScaleType(ImageView.ScaleType.CENTER_CROP); photo.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        banner.addView(photo, new FrameLayout.LayoutParams(-1, -1));
+        View contrast = new View(this); contrast.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{0xe609151d, 0x3309151d})); banner.addView(contrast, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout copy = vertical(); copy.setGravity(Gravity.CENTER_VERTICAL); copy.setPadding(dp(20), dp(14), dp(20), dp(14));
+        copy.addView(label("PRONTO PARA PARTIR", 9, 0xffb2f5ef));
+        TextView title = label("A trilha é sua.", compact ? 25 : 29, TEXT); title.setPadding(0, dp(9), 0, dp(7)); copy.addView(title);
+        copy.addView(label("Dê play no próximo caminho.", 13, 0xffe0e8ec)); banner.addView(copy, new FrameLayout.LayoutParams(-1, -1));
+        center.addView(banner, new LinearLayout.LayoutParams(-1, dp(compact ? 130 : 150)));
     }
 
     private void addSearch() {
-        LinearLayout searchBox = horizontal(); searchBox.setGravity(Gravity.CENTER_VERTICAL); searchBox.setPadding(dp(12), 0, dp(4), 0); searchBox.setBackground(shape(CARD, BORDER, 10));
+        LinearLayout searchBox = horizontal(); searchBox.setGravity(Gravity.CENTER_VERTICAL); searchBox.setPadding(dp(12), 0, dp(4), 0); searchBox.setBackground(shape(0xff242f39, 0, 12));
         query = new EditText(this); query.setTypeface(regular); query.setTextSize(17); query.setTextColor(TEXT); query.setHintTextColor(MUTED);
         query.setHint("Música ou artista"); query.setSingleLine(true); query.setBackgroundColor(Color.TRANSPARENT); query.setInputType(InputType.TYPE_CLASS_TEXT); query.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         query.setContentDescription("Buscar música ou artista"); query.setOnEditorActionListener((text, action, event) -> { if (action == EditorInfo.IME_ACTION_SEARCH) { search(); return true; } return false; });
@@ -576,7 +566,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderDemoPlayer() {
-        playerTitle.setText("Na direção do dia"); playerArtist.setText("Faixa de demonstração"); artwork.bind(cover, "", 0);
+        playerTitle.setText("Na direção do dia"); playerArtist.setText("Faixa de demonstração"); cover.setImageResource(R.drawable.preview_cover);
         playerStatus.setText("PRÉVIA · SEM REPRODUÇÃO"); seek.setProgress(0); seek.setEnabled(false);
         elapsed.setText("0:00"); duration.setText("—"); playButton.setGlyph("play");
     }
@@ -722,7 +712,7 @@ public final class MainActivity extends Activity {
         @Override public View getView(int position, View convert, ViewGroup parent) {
             RowHolder holder;
             if (convert == null) {
-                LinearLayout row = horizontal(); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(9), dp(8), dp(9), dp(8)); row.setMinimumHeight(dp(74));
+                LinearLayout row = horizontal(); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(14), dp(10), dp(14), dp(10)); row.setMinimumHeight(dp(74));
                 holder = new RowHolder(); holder.art = new ImageView(MainActivity.this); holder.art.setScaleType(ImageView.ScaleType.CENTER_CROP); holder.art.setBackground(shape(CARD, 0, 7)); holder.art.setClipToOutline(true);
                 row.addView(holder.art, new LinearLayout.LayoutParams(dp(51), dp(51))); LinearLayout copy = vertical(); copy.setPadding(dp(12), 0, dp(6), 0);
                 holder.title = label("", 16, TEXT); holder.title.setTypeface(medium); holder.title.setSingleLine(true); holder.title.setEllipsize(TextUtils.TruncateAt.END); copy.addView(holder.title);
@@ -733,7 +723,7 @@ public final class MainActivity extends Activity {
             } else holder = (RowHolder) convert.getTag();
             Row item = getItem(position); holder.title.setText(item.title); holder.subtitle.setText(item.subtitle);
             boolean active = !demo && item.uri != null && !item.uri.isEmpty() && item.uri.equals(playerState.optString("uri"));
-            holder.title.setTextColor(active ? ACCENT : TEXT); convert.setBackground(shape(active ? 0x154fd6e8 : Color.TRANSPARENT, 0, 8));
+            holder.title.setTextColor(active ? ACCENT : TEXT); convert.setBackground(shape(active ? 0xff223e40 : CARD, 0, 12));
             holder.time.setText(item.playlist ? "" : formatTime(item.durationMs)); holder.arrow.setVisibility(item.playlist ? View.VISIBLE : View.GONE);
             artwork.bind(holder.art, item.image, position); convert.setContentDescription(item.title + ", " + item.subtitle);
             return convert;
@@ -743,23 +733,21 @@ public final class MainActivity extends Activity {
 
     private LinearLayout brand() {
         LinearLayout row = horizontal(); row.setGravity(Gravity.CENTER_VERTICAL);
-        GlyphView mark = new GlyphView(this, "impulse", ACCENT); row.addView(mark, new LinearLayout.LayoutParams(dp(31), dp(37)));
-        TextView name = label("Impulsefy", 22, TEXT); name.setTypeface(medium); name.setPadding(dp(5), 0, 0, 0);
-        SpannableString word = new SpannableString("Impulsefy"); word.setSpan(new ForegroundColorSpan(ACCENT), 7, 9, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); name.setText(word); row.addView(name); return row;
+        row.addView(label("impulsefy", 20, TEXT)); return row;
     }
+
     private LinearLayout horizontal() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); return view; }
     private LinearLayout vertical() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
-    private View space(int height) { View view = new View(this); view.setLayoutParams(new LinearLayout.LayoutParams(1, dp(height))); return view; }
     private TextView label(String value, float size, int color) { TextView view = new TextView(this); view.setText(value); view.setTextColor(color); view.setTextSize(size); view.setTypeface(regular); view.setIncludeFontPadding(false); return view; }
     private Button button(String value, boolean primary, View.OnClickListener click) {
-        Button view = new Button(this); view.setText(value); view.setTypeface(medium); view.setTextSize(14); view.setTextColor(primary ? BG : TEXT); view.setAllCaps(false); view.setMinHeight(dp(48)); view.setMinimumHeight(dp(48));
-        view.setPadding(dp(12), 0, dp(12), 0); view.setStateListAnimator(null); view.setBackground(ripple(primary ? ACCENT : 0x05ffffff, primary ? 0 : BORDER, 9)); view.setOnClickListener(click); return view;
+        Button view = new Button(this); view.setText(value); view.setTypeface(medium); view.setTextSize(14); view.setTextColor(primary ? 0xff102628 : TEXT); view.setAllCaps(false); view.setMinHeight(dp(48)); view.setMinimumHeight(dp(48));
+        view.setPadding(dp(12), 0, dp(12), 0); view.setStateListAnimator(null); view.setBackground(ripple(primary ? ACCENT : 0xff242f39, 0, 10)); view.setOnClickListener(click); return view;
     }
     private GlyphView iconButton(String glyph, String description, boolean primary, View.OnClickListener click) {
-        GlyphView view = new GlyphView(this, glyph, primary ? BG : TEXT); view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES); view.setContentDescription(description);
+        GlyphView view = new GlyphView(this, glyph, primary ? 0xff102628 : TEXT); view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES); view.setContentDescription(description);
         view.setFocusable(true); view.setClickable(true); view.setBackground(ripple(primary ? ACCENT : Color.TRANSPARENT, 0, primary ? 32 : 10)); view.setOnClickListener(click); return view;
     }
     private GradientDrawable shape(int fill, int border, int radius) { GradientDrawable drawable = new GradientDrawable(); drawable.setColor(fill); drawable.setCornerRadius(dp(radius)); if (border != 0) drawable.setStroke(dp(1), border); return drawable; }
-    private RippleDrawable ripple(int fill, int border, int radius) { return new RippleDrawable(ColorStateList.valueOf(0x304fd6e8), shape(fill, border, radius), shape(Color.WHITE, 0, radius)); }
+    private RippleDrawable ripple(int fill, int border, int radius) { return new RippleDrawable(ColorStateList.valueOf(0x3085ece2), shape(fill, border, radius), shape(Color.WHITE, 0, radius)); }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }

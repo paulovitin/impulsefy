@@ -1,0 +1,6 @@
+Design reference: impulsefy.pen (user supplied).
+Coastal road photograph: Datingscout — https://unsplash.com/@datingscout
+https://images.unsplash.com/photo-1649872647698-4b80ebcf2958
+Preview cover photograph: damien dufour — https://unsplash.com/@damiendufourphotographie
+https://images.unsplash.com/photo-1676051303448-9a2664ac4955
+Inter typeface: https://github.com/google/fonts/tree/main/ofl/inter (license: fonts/OFL.txt).

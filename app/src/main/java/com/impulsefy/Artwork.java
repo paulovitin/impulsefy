@@ -6,12 +6,9 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
-import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
-import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
@@ -126,32 +123,15 @@ final class Artwork implements AutoCloseable {
     @Override public void close() { closed = true; workers.shutdownNow(); cache.evictAll(); }
 
     static final class Placeholder extends Drawable {
-        private static final int[][] COLORS = {
-                {0xff164852, 0xff0a222d}, {0xff594334, 0xff231c22},
-                {0xff444563, 0xff1a2036}, {0xff3c584c, 0xff132b28}
-        };
+        private static final int[] COLORS = {0xff203b3e, 0xff423522, 0xff292d47, 0xff25413c};
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path path = new Path();
         private final int seed;
-        private LinearGradient gradient;
         Placeholder(int seed) { this.seed = (seed & 0x7fffffff) % COLORS.length; }
-        @Override protected void onBoundsChange(Rect bounds) {
-            gradient = new LinearGradient(bounds.left, bounds.top, bounds.right, bounds.bottom,
-                    COLORS[seed][0], COLORS[seed][1], Shader.TileMode.CLAMP);
-        }
         @Override public void draw(Canvas canvas) {
             Rect bounds = getBounds(); float w = bounds.width(), h = bounds.height();
             canvas.save(); canvas.translate(bounds.left, bounds.top);
-            paint.setStyle(Paint.Style.FILL); paint.setShader(gradient);
-            canvas.drawRect(0, 0, w, h, paint); paint.setShader(null);
-            paint.setColor(0x184fd6e8); canvas.drawCircle(w * .74f, h * .25f, w * .47f, paint);
-            paint.setColor(0x147ff2e2); canvas.drawCircle(w * .72f, h * .25f, w * .32f, paint);
-            paint.setColor(0x1affffff); paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(Math.max(1, w / 150));
-            for (int i = 0; i < 5; i++) {
-                path.reset(); path.moveTo(-w * .1f, h * (.59f + i * .105f));
-                path.cubicTo(w * .3f, h * (.18f + i * .09f), w * .7f, h * (1.1f + i * .03f), w * 1.15f, h * (.61f + i * .06f));
-                canvas.drawPath(path, paint);
-            }
+            paint.setStyle(Paint.Style.FILL); paint.setColor(COLORS[seed]);
+            canvas.drawRect(0, 0, w, h, paint); paint.setStyle(Paint.Style.STROKE);
             paint.setColor(0xcceaf2f8); paint.setStrokeWidth(Math.max(1.7f, w / 85));
             paint.setStrokeCap(Paint.Cap.ROUND);
             float s = Math.min(w, h) * .23f, x = w * .5f, y = h * .5f;

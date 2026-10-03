@@ -52,15 +52,13 @@ final class GlyphView extends View {
                 path.cubicTo(2, 1, 9, 1, 12, 6); path.cubicTo(15, 1, 22, 1, 22, 7);
                 path.cubicTo(22, 12, 16, 17, 12, 21); canvas.drawPath(path, paint); break;
             case "play":
-                paint.setStyle(Paint.Style.FILL);
                 path.moveTo(8, 4); path.lineTo(21, 12); path.lineTo(8, 20); path.close();
                 canvas.drawPath(path, paint); break;
             case "pause":
-                paint.setStyle(Paint.Style.FILL); canvas.drawRoundRect(6, 4, 10, 20, 1, 1, paint);
+                canvas.drawRoundRect(6, 4, 10, 20, 1, 1, paint);
                 canvas.drawRoundRect(14, 4, 18, 20, 1, 1, paint); break;
             case "previous": case "next":
                 if (glyph.equals("previous")) { canvas.translate(24, 0); canvas.scale(-1, 1); }
-                paint.setStyle(Paint.Style.FILL);
                 path.moveTo(5, 5); path.lineTo(17, 12); path.lineTo(5, 19); path.close();
                 canvas.drawPath(path, paint); canvas.drawRoundRect(18, 5, 20, 19, 1, 1, paint); break;
             case "back":
@@ -69,11 +67,10 @@ final class GlyphView extends View {
             case "chevron":
                 path.moveTo(9, 6); path.lineTo(15, 12); path.lineTo(9, 18); canvas.drawPath(path, paint); break;
             case "settings":
-                canvas.drawCircle(12, 12, 7, paint); canvas.drawCircle(12, 12, 2.5f, paint);
-                for (int i = 0; i < 8; i++) {
-                    canvas.save(); canvas.rotate(i * 45, 12, 12);
-                    canvas.drawLine(12, 2, 12, 5, paint); canvas.restore();
-                } break;
+                canvas.drawLine(3, 7, 6, 7, paint); canvas.drawLine(12, 7, 21, 7, paint);
+                canvas.drawCircle(9, 7, 3, paint);
+                canvas.drawLine(3, 17, 12, 17, paint); canvas.drawLine(18, 17, 21, 17, paint);
+                canvas.drawCircle(15, 17, 3, paint); break;
             case "music":
                 canvas.drawLine(9, 17, 9, 5, paint); canvas.drawLine(9, 5, 20, 3, paint);
                 canvas.drawLine(20, 3, 20, 15, paint);
@@ -83,9 +80,9 @@ final class GlyphView extends View {
                 break;
             case "impulse":
                 paint.setStrokeWidth(2.2f);
-                path.moveTo(1, 13); path.lineTo(6, 13); path.lineTo(10, 4);
-                path.lineTo(14, 20); path.lineTo(18, 10); path.lineTo(23, 10);
-                canvas.drawPath(path, paint); break;
+                canvas.drawLine(2, 10, 2, 14, paint); canvas.drawLine(6, 6, 6, 18, paint);
+                canvas.drawLine(10, 2, 10, 22, paint); canvas.drawLine(14, 8, 14, 16, paint);
+                canvas.drawLine(18, 5, 18, 19, paint); canvas.drawLine(22, 10, 22, 14, paint); break;
             default: canvas.drawCircle(12, 12, 5, paint);
         }
         canvas.restore();
