@@ -283,6 +283,12 @@ public final class AuthManager implements AutoCloseable {
 
     private static void requireRelay(Http.Response response, int expected) throws Exception {
         if (response.status == expected) return;
+        if (response.status == 503) {
+            String reason = "";
+            try { reason = new JSONObject(response.body).optString("error"); }
+            catch (org.json.JSONException ignored) { /* A proxy may return HTML instead of JSON. */ }
+            if ("spotify_not_configured".equals(reason)) throw new Exception("O servidor ainda não foi configurado para conectar ao Spotify.");
+        }
         if (response.status == 404 || response.status == 410) throw new Exception("Este QR expirou ou foi usado. Gere outro para conectar.");
         if (response.status == 429) throw new Exception("Muitas tentativas. Aguarde " + response.retryAfterSeconds + " segundos e gere outro QR.");
         throw new Exception("O relay não está disponível. Confira o endereço e tente novamente.");

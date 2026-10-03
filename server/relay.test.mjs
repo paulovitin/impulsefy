@@ -23,12 +23,14 @@ async function pair(base, state = token(), challenge = hash(token())) {
   return { response, value: await response.json(), state, challenge };
 }
 async function consent(base, pairing) {
-  const page = await (await fetch(`${base}/pair/${pairing.id}`)).text();
+  const response = await fetch(`${base}/pair/${pairing.id}`);
+  assert.equal(response.headers.get('referrer-policy'), 'same-origin');
+  const page = await response.text();
   const csrf = /name="consent" value="([A-Za-z\d_-]+)"/.exec(page)?.[1];
   assert.ok(csrf);
   assert.ok(page.includes(pairing.displayCode));
   assert.ok(!page.includes(pairing.pollSecret));
-  return fetch(`${base}/pair/${pairing.id}/authorize`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ consent: csrf }), redirect: 'manual' });
+  return fetch(`${base}/pair/${pairing.id}/authorize`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', Origin: 'https://login.example.test' }, body: new URLSearchParams({ consent: csrf }), redirect: 'manual' });
 }
 const poll = (base, pairing, secret = pairing.pollSecret) => fetch(`${base}/v1/pair/${pairing.id}`, { method: 'POST', headers: { Authorization: `Bearer ${secret}` } });
 
@@ -99,11 +101,12 @@ test('confirmation requires same-origin form nonce and cannot be replayed', asyn
   const path = `${base}/pair/${created.id}/authorize`;
   assert.equal((await fetch(path, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'consent=wrong' })).status, 403);
   assert.equal((await fetch(path, { method: 'POST', headers: { Origin: 'https://evil.example' } })).status, 403);
+  assert.equal((await fetch(path, { method: 'POST', headers: { Origin: 'null' } })).status, 403);
   const response = await consent(base, created);
   assert.equal(response.status, 303);
   assert.equal((await fetch(`${base}/pair/${created.id}`)).status, 409);
   assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
-  assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  assert.equal(response.headers.get('referrer-policy'), 'same-origin');
 });
 
 test('cancellation is authenticated and expiry destroys pending codes', async t => {

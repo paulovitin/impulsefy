@@ -35,12 +35,14 @@ esse endereço. O APK não foi publicado, conforme a revisão do pedido.
 - Origem pública configurada: `https://impulsefy.paulovitor.app`.
 - Callback a cadastrar no Spotify: `https://impulsefy.paulovitor.app/callback`.
 
-Verificado: container saudável, sete testes aprovados dentro da imagem de
-produção e `/health` respondendo. O Client ID ainda está vazio, portanto o
-login retorna 503. O domínio ainda não resolvia no DNS na verificação do deploy.
-O túnel usa configuração remota e um token de execução; sua rota/DNS não pôde
-ser administrada por essa configuração local. No Cloudflare, configure o hostname
-`impulsefy.paulovitor.app` com serviço **`http://localhost:8787`** no túnel desse host.
+Verificado em 2026-10-03: domínio público acessível por HTTPS, inclusive a partir
+do carro, Client ID configurado e `/health` com `spotifyConfigured: true`.
+Pareamento e confirmação redirecionam para o login do Spotify. Os sete testes
+passaram dentro da imagem de produção. A confirmação também foi testada em um
+navegador: `Referrer-Policy: same-origin` preserva a origem do formulário sem
+enviar a URL de pareamento ao Spotify. A política anterior, `no-referrer`, enviava
+`Origin: null` e causava `origin_mismatch`. A autorização da conta pelo usuário
+e a reprodução real ainda precisam ser concluídas no carro.
 
 Após preencher `SPOTIFY_CLIENT_ID` no arquivo de configuração:
 

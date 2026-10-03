@@ -32,6 +32,7 @@ public final class SmokeInstrumentation extends Instrumentation {
         Activity activity = null;
         AuthManager auth = null;
         try {
+            verifyRelayConfigurationError();
             System.loadLibrary("impulsefy");
             CountDownLatch nativeReply = new CountDownLatch(1);
             AtomicReference<String> audioError = new AtomicReference<>();
@@ -148,7 +149,7 @@ public final class SmokeInstrumentation extends Instrumentation {
             require(rejected, "signed-out session accepted a late playback credential");
             auth.logout();
             require(auth.playbackCredential() == null, "logout retained credential");
-            result.putString("stream", "\nPASS: Android navigation, Rust JNI roundtrip, PCM AudioTrack lifecycle and failed-output recovery, focus gain while loading, rendered QR decode, S256, phone consent denial, encrypted persistence and signed-out write protection.\n");
+            result.putString("stream", "\nPASS: Android navigation, Rust JNI roundtrip, PCM AudioTrack lifecycle and failed-output recovery, focus gain while loading, rendered QR decode, S256, phone consent denial, encrypted persistence, signed-out write protection and relay configuration errors.\n");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable failure) {
             result.putString("stream", "\nFAIL: " + android.util.Log.getStackTraceString(failure));
@@ -157,6 +158,22 @@ public final class SmokeInstrumentation extends Instrumentation {
             getTargetContext().getSharedPreferences("impulsefy_ui", 0).edit().remove("relay").commit();
             if (auth != null) auth.close();
             if (activity != null) { Activity screen = activity; runOnMainSync(screen::finish); }
+        }
+    }
+
+    private void verifyRelayConfigurationError() throws Exception {
+        java.lang.reflect.Method check = AuthManager.class.getDeclaredMethod("requireRelay", Http.Response.class, int.class);
+        check.setAccessible(true);
+        String[] bodies = {"{\"error\":\"spotify_not_configured\"}", "{\"error\":\"busy\"}", "<html>private proxy details</html>"};
+        for (int i = 0; i < bodies.length; i++) {
+            try {
+                check.invoke(null, new Http.Response(503, bodies[i], 0), 200);
+                throw new AssertionError("unavailable relay accepted");
+            } catch (java.lang.reflect.InvocationTargetException error) {
+                String expected = i == 0 ? "O servidor ainda não foi configurado para conectar ao Spotify."
+                    : "O relay não está disponível. Confira o endereço e tente novamente.";
+                require(expected.equals(error.getCause().getMessage()), "relay configuration error hidden or proxy details exposed");
+            }
         }
     }
 
