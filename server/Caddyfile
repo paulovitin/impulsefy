@@ -1,0 +1,4 @@
+{$PUBLIC_URL} {
+    # Intentionally no access log: callback URLs contain one-time OAuth codes.
+    reverse_proxy relay:8787
+}

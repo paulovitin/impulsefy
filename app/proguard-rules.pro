@@ -1,0 +1,2 @@
+-keep class com.impulsefy.NativePlayer { *; }
+-keepclasseswithmembernames class * { native <methods>; }

@@ -1,0 +1,47 @@
+plugins { id 'com.android.application' }
+
+android {
+    enableKotlin = false
+    namespace 'com.impulsefy'
+    compileSdk 36
+    ndkVersion '27.2.12479018'
+    defaultConfig {
+        applicationId 'com.impulsefy'
+        minSdk 23
+        targetSdk 28
+        versionCode 1
+        versionName '0.1.0'
+        testInstrumentationRunner 'com.impulsefy.SmokeInstrumentation'
+        def relay = (findProperty('relayUrl') ?: '').toString()
+        buildConfigField 'String', 'RELAY_URL', '"' + relay.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    }
+    buildFeatures { buildConfig true }
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (findProperty('localSigning') == 'true') signingConfig signingConfigs.debug
+        }
+    }
+    // Compressed download; Android extracts only the device's ABI at install time.
+    packaging { jniLibs { useLegacyPackaging = true } }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint { disable 'ExpiredTargetSdkVersion' }
+}
+
+dependencies {
+    implementation 'com.google.zxing:core:3.5.4'
+}
+
+tasks.register('verifyNativeLibrary') {
+    doLast {
+        if (fileTree('src/main/jniLibs') { include '**/libimpulsefy.so' }.isEmpty()) {
+            throw new GradleException('Motor de áudio ausente. Execute ./scripts/build-native.sh antes de gerar o APK.')
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'verifyNativeLibrary' }

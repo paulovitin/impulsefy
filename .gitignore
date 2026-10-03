@@ -1,0 +1,10 @@
+.gradle/
+**/build/
+local.properties
+native/target/
+app/src/main/jniLibs/
+*.keystore
+*.jks
+.env
+.DS_Store
+artifacts/

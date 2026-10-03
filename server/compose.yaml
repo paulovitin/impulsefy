@@ -1,0 +1,26 @@
+services:
+  relay:
+    build: .
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL to your HTTPS origin}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:?Set your Spotify application Client ID}
+      PORT: 8787
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+volumes:
+  caddy_data:
+  caddy_config:
