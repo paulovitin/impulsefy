@@ -30,7 +30,7 @@ function page(title, description, content = '') {
 // testOnly is constructor injection for node:test; the production CLI never reads overrides from env.
 export function createRelay({ publicUrl, clientId, testOnly = {} }) {
   const base = origin(publicUrl);
-  if (!/^[a-f\d]{32}$/i.test(clientId || '')) throw new Error('Configure SPOTIFY_CLIENT_ID com o Client ID do seu aplicativo Spotify.');
+  if (clientId && !/^[a-f\d]{32}$/i.test(clientId)) throw new Error('Configure SPOTIFY_CLIENT_ID com o Client ID do seu aplicativo Spotify.');
   const authorizeUrl = testOnly.authorizeUrl || 'https://accounts.spotify.com/authorize';
   const ttl = testOnly.ttlMs ?? 5 * 60_000;
   const capacity = testOnly.capacity ?? 500;
@@ -95,7 +95,12 @@ export function createRelay({ publicUrl, clientId, testOnly = {} }) {
         return send(429, { error: 'rate_limited' });
       }
       if (req.headers.origin && req.headers.origin !== base) return send(403, { error: 'origin_mismatch' });
-      if (req.method === 'GET' && url.pathname === '/health') return send(200, { ok: true });
+      if (req.method === 'GET' && url.pathname === '/health') return send(200, { ok: true, spotifyConfigured: Boolean(clientId) });
+      if (req.method === 'GET' && url.pathname === '/') return send(200, page('Sua música, no carro.', clientId
+        ? 'Abra o Impulsefy no carro e escaneie o QR para conectar seu Spotify.'
+        : 'A conexão com o Spotify ainda não está disponível. Tente novamente mais tarde.'), true);
+      // The deployment can be checked before configuration, but cannot issue login grants.
+      if (!clientId) return send(503, { error: 'spotify_not_configured' });
       if (req.method === 'GET' && url.pathname === '/v1/config') return send(200, { clientId, redirectUri, scopes: SCOPES });
       if (req.method === 'POST' && url.pathname === '/v1/pair') {
         if (++rate.creates > createLimit) {
@@ -157,7 +162,6 @@ export function createRelay({ publicUrl, clientId, testOnly = {} }) {
         session.result = error ? { error: 'access_denied' } : { code };
         return send(200, error ? page('Login cancelado', 'Volte à tela do carro para tentar novamente.') : page('Tudo pronto por aqui.', 'Autorização recebida. O carro concluirá a conexão com o Spotify. Você já pode fechar esta página.'), true);
       }
-      if (req.method === 'GET' && url.pathname === '/') return send(200, page('Sua música, no carro.', 'Abra o Impulsefy no carro e escaneie o QR para conectar seu Spotify.'), true);
       return send(404, { error: 'not_found' });
     } catch (error) {
       if (!res.headersSent && !res.destroyed) send(error.status || 500, { error: error.status === 413 ? 'too_large' : 'invalid_request' });

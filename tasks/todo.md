@@ -56,4 +56,9 @@ Verificado em 2026-10-03:
 Não há conta Premium, Client ID próprio ou domínio de publicação configurados nesta árvore. Por isso,
 o consentimento bem-sucedido no Spotify, refresh ao vivo, reprodução de uma música
 real e comportamento no hardware físico permanecem sem validação. A ponte é
-entregue para o usuário publicar, conforme solicitado; não foi publicada.
+entregue para o usuário publicar, conforme solicitado.
+
+Atualização de deploy: posteriormente instalada em `tonton`, no Compose de
+`~/docker`, porta local 8787, container saudável. Login bloqueado até preencher
+o Client ID e acesso HTTPS pendente da rota/DNS no Cloudflare Tunnel. Sete testes
+da ponte passaram também na imagem de produção. Detalhes em `server/README.md`.

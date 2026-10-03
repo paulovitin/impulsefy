@@ -3,7 +3,7 @@ services:
     build: .
     environment:
       PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL to your HTTPS origin}
-      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:?Set your Spotify application Client ID}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
       PORT: 8787
     restart: unless-stopped
     read_only: true

@@ -138,7 +138,21 @@ test('enforces public HTTPS origins and fixed configuration', () => {
   for (const publicUrl of ['http://example.com', 'http://localhost:8787', 'https://user:pass@example.com', 'https://example.com/prefix', 'https://example.com?x=y']) {
     assert.throws(() => createRelay({ publicUrl, clientId }));
   }
-  assert.throws(() => createRelay({ publicUrl: 'https://example.com', clientId: '' }));
+  assert.throws(() => createRelay({ publicUrl: 'https://example.com', clientId: 'not-a-client-id' }));
   const local = createRelay({ publicUrl: 'http://127.0.0.1:8787', clientId });
   local.emit('close');
+});
+
+test('unconfigured deployment reports health but never creates login sessions', async t => {
+  const base = await listen(t, createRelay({ publicUrl: 'https://login.example.test' }));
+  assert.deepEqual(await (await fetch(`${base}/health`)).json(), { ok: true, spotifyConfigured: false });
+  assert.match(await (await fetch(base)).text(), /ainda não está disponível/);
+  for (const path of ['/v1/config', '/callback?state=test&code=test', '/pair/test']) {
+    const response = await fetch(`${base}${path}`, { redirect: 'manual' });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'spotify_not_configured' });
+  }
+  const created = await pair(base);
+  assert.equal(created.response.status, 503);
+  assert.equal(created.value.pollSecret, undefined);
 });
