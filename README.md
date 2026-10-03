@@ -29,7 +29,11 @@ um APK otimizado sem assinatura, para assinatura com sua própria chave.
 2. Inclua seu endereço HTTPS no build acima, ou informe-o uma vez em
    **Endereço de conexão** no aplicativo.
 3. Toque em conectar, leia o QR no celular, confira o código e autorize no Spotify.
-4. O carro recebe a autorização e mantém a sessão para os próximos usos.
+4. Para autorizar o áudio na primeira vez, conecte celular e carro à mesma rede
+   Wi-Fi. No Spotify do celular, usando a mesma conta, abra **Dispositivos** e
+   selecione **Impulsefy**. O aplicativo aguarda essa seleção por cinco minutos;
+   para tentar novamente, toque em reproduzir no carro.
+5. O carro salva as autorizações da biblioteca e do áudio para os próximos usos.
 
 A senha é digitada apenas no Spotify. O verificador PKCE e os tokens permanecem
 no carro; a ponte transporta somente o código temporário e o descarta após a
@@ -40,7 +44,15 @@ O login segue a estratégia Authorization Code + PKCE S256 do
 O callback loopback do desktop não funciona entre celular e carro: ele voltaria
 ao próprio celular. A ponte adapta esse retorno para dois dispositivos e exige
 um Client ID próprio com o callback HTTPS cadastrado. Nenhum client secret é
-necessário. Celular e carro só precisam de acesso à internet.
+necessário. O login por QR só precisa de acesso à internet. A autorização inicial
+do áudio usa Spotify Connect na rede local; depois disso, o carro reutiliza a
+credencial salva e reproduz diretamente pela internet.
+
+O token OAuth da biblioteca não é usado como autorização de áudio no login5:
+esse fluxo rejeita tokens de apps próprios com `INVALID_CREDENTIALS` ou
+`BAD_REQUEST`. A autorização recebida pelo Spotify Connect precisa corresponder
+à conta verificada pelo OAuth; uma conta diferente é recusada. O anúncio local
+é encerrado após a seleção, ao cancelar ou quando o prazo expira.
 
 É necessário Spotify Premium para reprodução pelo librespot. Apps Spotify em
 Development Mode também exigem Premium do proprietário e têm limites de

@@ -651,7 +651,7 @@ public final class MainActivity extends Activity {
     private boolean canPlay() {
         if (demo) { toast("Esta é uma prévia. Conecte seu Spotify para ouvir."); return false; }
         if (!premiumAllowed) { toast("Use uma conta Spotify Premium para ouvir no carro."); return false; }
-        if (player == null || !playerState.optBoolean("connected")) { toast("Conectando ao Spotify. Tente novamente em instantes."); connectPlayer(); return false; }
+        if (player == null || !playerState.optBoolean("connected")) { toast(playerState.optString("error", "").isEmpty() ? "Conectando ao Spotify. Tente novamente em instantes." : playerState.optString("error")); connectPlayer(); return false; }
         return true;
     }
 

@@ -14,7 +14,7 @@ Wave 2: [integração e verificações]
 - [x] Build, lint e verificação independente do código consolidado.
 - [x] Capturas de tela, tamanho e medidas de execução.
 - [x] Documentar instalação, publicação da ponte e limites verificados.
-- [ ] Login e reprodução reais com conta Premium após publicação/configuração da ponte.
+- [x] Login e reprodução reais com conta Premium após publicação/configuração da ponte.
 
 ## Decisões
 
@@ -53,12 +53,20 @@ Verificado em 2026-10-03:
   restauração do volume e descarte de AudioTrack inválido. Segunda revisão sem
   achados acionáveis. Build, lint, quatro testes Rust e Clippy confirmados pelo revisor.
 
-Não há conta Premium, Client ID próprio ou domínio de publicação configurados nesta árvore. Por isso,
-o consentimento bem-sucedido no Spotify, refresh ao vivo, reprodução de uma música
-real e comportamento no hardware físico permanecem sem validação. A ponte é
-entregue para o usuário publicar, conforme solicitado.
+Atualização de deploy: ponte instalada em `tonton`, no Compose de `~/docker`,
+porta local 8787, container saudável. Client ID e callback configurados em
+`https://impulsefy.paulovitor.app`; login real confirmado pelo usuário.
+Sete testes da ponte passaram também na imagem de produção. Detalhes em `server/README.md`.
 
-Atualização de deploy: posteriormente instalada em `tonton`, no Compose de
-`~/docker`, porta local 8787, container saudável. Login bloqueado até preencher
-o Client ID e acesso HTTPS pendente da rota/DNS no Cloudflare Tunnel. Sete testes
-da ponte passaram também na imagem de produção. Detalhes em `server/README.md`.
+Validação no carro em 2026-10-03:
+
+- O token OAuth carregava a biblioteca, mas o login5 recusava a autorização de áudio.
+  O player agora recebe uma credencial própria pelo Spotify Connect na mesma rede,
+  aceita somente a conta verificada pelo OAuth e salva a credencial no Keystore.
+- APK atualizado por ADB com os dados preservados. Descoberta local confirmada,
+  usuário selecionou Impulsefy no Spotify e confirmou estar ouvindo a música.
+  MediaSession do carro em PLAYING, sem erro; multicast liberado após a autorização.
+- Cinco testes Rust, incluindo recusa de credenciais de outra conta, Clippy sem
+  avisos e build ARM64/ARMv7 com R8 e lint release passaram.
+- A reconexão após reiniciar o app e a renovação por expiração ainda não foram
+  verificadas ao vivo após essa correção; a reprodução em andamento foi preservada.

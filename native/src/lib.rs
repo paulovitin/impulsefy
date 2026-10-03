@@ -1,3 +1,4 @@
+use futures_util::StreamExt;
 use jni::{
     objects::{GlobalRef, JClass, JObject, JString, JValue},
     sys::jlong,
@@ -13,6 +14,7 @@ use librespot_core::{
     session::Session,
     SpotifyUri,
 };
+use librespot_discovery::Discovery;
 use librespot_metadata::audio::UniqueFields;
 use librespot_playback::{
     audio_backend::{Sink, SinkError, SinkResult},
@@ -203,6 +205,67 @@ fn credentials(login: &Login) -> Result<Credentials, String> {
     Ok(Credentials::with_access_token(login.access_token.clone()))
 }
 
+fn playback_credential_for(credential: &Credentials, username: &str) -> bool {
+    !username.is_empty()
+        && credential.username.as_deref() == Some(username)
+        && credential.auth_type == AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS
+        && !credential.auth_data.is_empty()
+}
+
+async fn playback_credentials(
+    login: &Login,
+    config: &SessionConfig,
+    bridge: &Bridge,
+) -> Result<Credentials, String> {
+    let credential = credentials(login)?;
+    if credential.auth_type == AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS {
+        return Ok(credential);
+    }
+
+    // Web API OAuth identifies the account, but login5 needs a separate playback
+    // grant. Verify the account before accepting a local Spotify Connect grant.
+    let probe = Session::new(config.clone(), None);
+    let verified = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(30), probe.connect(credential, false)) => match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(format!("Não foi possível verificar sua conta Spotify ({:?}). Tente novamente.", error.kind)),
+            Err(_) => Err("O Spotify não respondeu a tempo. Verifique a rede.".into()),
+        },
+        _ = async { while !bridge.closed.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(100)).await; } } => Err("Player encerrado".into()),
+    };
+    let username = probe.username();
+    probe.shutdown();
+    verified?;
+
+    let mut discovery = Discovery::builder(config.device_id.clone(), config.client_id.clone())
+        .name("Impulsefy")
+        .device_type(DeviceType::Automobile)
+        .launch()
+        .map_err(|_| "Não foi possível anunciar o carro no Spotify. Verifique o Wi-Fi e tente novamente.")?;
+    let mut waiting = State {
+        loading: true,
+        device_id: login.device_id.clone(),
+        error: "No Spotify do celular, abra Dispositivos e escolha Impulsefy. Use a mesma conta e rede Wi-Fi do carro.".into(),
+        ..State::default()
+    };
+    bridge.publish(&waiting);
+    let result = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(300), async {
+            while let Some(credential) = discovery.next().await {
+                if playback_credential_for(&credential, &username) {
+                    return Ok(credential);
+                }
+                waiting.error = "Use no Spotify do celular a mesma conta conectada ao Impulsefy e selecione o carro novamente.".into();
+                bridge.publish(&waiting);
+            }
+            Err("A conexão local foi interrompida. Verifique o Wi-Fi e tente novamente.".into())
+        }) => result.unwrap_or_else(|_| Err("A autorização de áudio expirou. Toque em reproduzir e escolha Impulsefy no Spotify do celular.".into())),
+        _ = async { while !bridge.closed.load(Ordering::Acquire) { tokio::time::sleep(Duration::from_millis(100)).await; } } => Err("Player encerrado".into()),
+    };
+    discovery.shutdown().await;
+    result
+}
+
 async fn connect(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, String> {
     let result = connect_once(login, bridge.clone()).await;
     if result.is_err()
@@ -221,13 +284,13 @@ async fn connect(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, String> {
 }
 
 async fn connect_once(login: &Login, bridge: Arc<Bridge>) -> Result<Engine, String> {
-    let credential = credentials(login)?;
     let config = SessionConfig {
         device_id: login.device_id.clone(),
         tmp_dir: bridge.tmp_dir.clone(),
         autoplay: Some(false),
         ..SessionConfig::default()
     };
+    let credential = playback_credentials(login, &config, &bridge).await?;
     // No cache at all: no plain-text credentials, and no unbounded disk audio.
     let session = Session::new(config, None);
     let mixer: Arc<dyn Mixer> = Arc::new(
@@ -747,6 +810,23 @@ mod tests {
         );
         assert!(!state.playing && !state.loading);
     }
+    #[test]
+    fn playback_pairing_only_accepts_the_signed_in_account() {
+        let mut credential = Credentials {
+            username: Some("signed-in-user".into()),
+            auth_type: AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS,
+            auth_data: vec![1, 2, 3],
+        };
+        assert!(playback_credential_for(&credential, "signed-in-user"));
+        assert!(!playback_credential_for(&credential, "another-user"));
+        assert!(!playback_credential_for(&credential, ""));
+        credential.auth_type = AuthenticationType::AUTHENTICATION_SPOTIFY_TOKEN;
+        assert!(!playback_credential_for(&credential, "signed-in-user"));
+        credential.auth_type = AuthenticationType::AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS;
+        credential.auth_data.clear();
+        assert!(!playback_credential_for(&credential, "signed-in-user"));
+    }
+
     #[test]
     fn invalid_stored_credentials_fall_back_to_access_token() {
         let login = Login {

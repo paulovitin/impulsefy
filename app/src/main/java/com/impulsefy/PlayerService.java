@@ -14,6 +14,7 @@ import android.media.AudioAttributes;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.wifi.WifiManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
@@ -49,6 +50,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
     private long mediaUpdatedAt, mediaPosition;
     private int mediaStatus = -1;
     private PowerManager.WakeLock wakeLock;
+    private WifiManager.MulticastLock discoveryLock;
     private long wakeAcquiredAt;
 
     private final BroadcastReceiver noisy = new BroadcastReceiver() {
@@ -117,6 +119,11 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
             put(connecting, "loading", true); put(connecting, "deviceId", deviceId == null ? "" : deviceId);
             publish(connecting);
             try {
+                if (discoveryLock == null) {
+                    discoveryLock = getSystemService(WifiManager.class).createMulticastLock("impulsefy:pairing");
+                    discoveryLock.setReferenceCounted(false);
+                }
+                discoveryLock.acquire();
                 player = new NativePlayer(this, new NativePlayer.Callback() {
                     @Override public void onState(JSONObject value) { publish(value); }
                     @Override public boolean requestAudioFocus() { return acquireFocus(); }
@@ -219,6 +226,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
         publicState.remove("credential");
         JSONObject previous;
         synchronized (stateLock) { previous = state; state = publicState; }
+        if (discoveryLock != null && discoveryLock.isHeld() && (publicState.optBoolean("connected") || !publicState.optBoolean("loading"))) discoveryLock.release();
         updateMediaSession(publicState, previous);
         boolean active = publicState.optBoolean("playing") || publicState.optBoolean("loading");
         long now = SystemClock.elapsedRealtime();
@@ -325,6 +333,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
         if (player != null) { player.close(); player = null; }
         abandonFocus();
         if (wakeLock.isHeld()) wakeLock.release();
+        if (discoveryLock != null && discoveryLock.isHeld()) discoveryLock.release();
         unregisterReceiver(noisy);
         session.setActive(false); session.release();
         main.removeCallbacksAndMessages(null);
