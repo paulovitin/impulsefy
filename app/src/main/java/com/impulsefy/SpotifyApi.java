@@ -12,8 +12,8 @@ import java.nio.charset.StandardCharsets;
 
 public final class SpotifyApi {
     private final AuthManager auth;
-    interface SessionReader { JSONObject read(String path) throws Exception; }
-    private final SessionReader reader;
+    interface SessionRequest { JSONObject request(String method, String path, JSONObject body) throws Exception; }
+    private final SessionRequest reader;
 
     public static final class ApiException extends Exception {
         public final int status;
@@ -26,9 +26,19 @@ public final class SpotifyApi {
         }
     }
 
-    SpotifyApi(AuthManager auth, SessionReader reader) { this.auth = auth; this.reader = reader; }
+    SpotifyApi(AuthManager auth, SessionRequest reader) { this.auth = auth; this.reader = reader; }
 
-    public JSONObject get(String relativePath) throws Exception { return request("GET", relativePath, null); }
+    public JSONObject get(String relativePath) throws Exception {
+        String path = relativePath;
+        if (!auth.usesNativeCatalog()) {
+            if (path.startsWith("/me/artists?")) path = path.replace("/me/artists?", "/me/following?type=artist&");
+            else if (path.matches("/artists/[A-Za-z0-9]{22}/tracks(?:\\?.*)?")) path = path.substring(0, path.indexOf("/tracks")) + "/top-tracks?market=from_token";
+        }
+        JSONObject value = request("GET", path, null);
+        if (path.startsWith("/me/following") && value.optJSONObject("artists") != null) return value.getJSONObject("artists");
+        if (path.contains("/top-tracks") && value.optJSONArray("tracks") != null) return new JSONObject().put("items", value.getJSONArray("tracks"));
+        return value;
+    }
 
     /** Blocking: call from a worker, never from the main/UI thread. Paths are relative to /v1/. */
     public JSONObject request(String method, String relativePath, JSONObject body) throws Exception {
@@ -41,8 +51,7 @@ public final class SpotifyApi {
             throw new IllegalArgumentException("Use um caminho relativo da API Spotify.");
         }
         if (auth.usesNativeCatalog()) {
-            if (!"GET".equals(method)) throw new IllegalArgumentException("Operação indisponível.");
-            return reader.read(relativePath.startsWith("/") ? relativePath : "/" + relativePath);
+            return reader.request(method, relativePath.startsWith("/") ? relativePath : "/" + relativePath, body);
         }
         String url = "https://api.spotify.com/v1/" + (relativePath.startsWith("/") ? relativePath.substring(1) : relativePath);
         String access = auth.accessToken();
@@ -51,7 +60,10 @@ public final class SpotifyApi {
             access = auth.refreshAfterUnauthorized(access);
             response = Http.request(method, url, body == null ? null : body.toString(), "application/json", access);
         }
-        if (response.status >= 200 && response.status < 300) return response.json();
+        if (response.status >= 200 && response.status < 300) {
+            if (path.getPath().endsWith("/tracks/contains")) return new JSONObject().put("saved", new org.json.JSONArray(response.body));
+            return response.json();
+        }
         String message;
         if (response.status == 429) message = "Spotify pediu uma pausa. Tente novamente em " + response.retryAfterSeconds + " segundos.";
         else if (response.status == 401) message = "Sua sessão Spotify expirou. Entre novamente.";

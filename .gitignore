@@ -1,11 +1,30 @@
+# Android / Gradle
 .gradle/
 **/build/
 local.properties
+*.apk
+*.aab
+
+# Compiled Rust and JNI libraries
 native/target/
 app/src/main/jniLibs/
+
+# Signing keys and local environment
 *.keystore
 *.jks
+keystore.properties
 .env
-.DS_Store
+.env.*
+!.env.example
+
+# Build artifacts, dependencies and logs
 artifacts/
 node_modules/
+*.log
+
+# Editor and operating system files
+.idea/
+*.iml
+.DS_Store
+._*
+Thumbs.db

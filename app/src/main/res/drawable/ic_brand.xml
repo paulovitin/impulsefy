@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="44dp" android:height="44dp" android:viewportWidth="44" android:viewportHeight="44">
+    <!-- design/impulsefy.pen: logo component l7Hor2 used by QhCG9. -->
+    <group android:translateX="2.178" android:translateY="2.068">
+        <path android:fillColor="#3DE2C1" android:pathData="M31.79 0l-23.804 0c-4.477 0-7.986 3.663-7.986 8.173l0 23.551c0 4.587 3.575 8.162 7.986 8.162l23.804 0c4.466 0 7.854-3.707 7.854-8.096l0-23.694c0-4.51-3.432-8.096-7.854-8.096z" />
+    </group>
+    <group android:translateX="13.893" android:translateY="19.932">
+        <path android:fillColor="#070D13" android:pathData="M2.2 0c-1.243 0-2.2 1.012-2.2 2.2l0 10.054c0 1.232 1.001 2.255 2.2 2.255 1.243 0 2.189-1.023 2.189-2.2l0-10.109c0-1.221-0.946-2.2-2.189-2.2z" />
+    </group>
+    <group android:translateX="19.712" android:translateY="16.17">
+        <path android:fillColor="#070D13" android:pathData="M2.266 0c-1.353 0-2.266 1.078-2.266 2.255l0 13.761c0 1.276 1.056 2.255 2.299 2.255 1.32 0 2.255-1.078 2.255-2.233l0-13.783c0-1.265-0.99-2.255-2.288-2.255z" />
+    </group>
+    <group android:translateX="25.696" android:translateY="19.734">
+        <path android:fillColor="#070D13" android:pathData="M2.211 0c-1.298 0-2.211 1.067-2.211 2.255l0 10.164c0 1.287 1.023 2.288 2.222 2.288 1.298 0 2.189-1.1 2.189-2.266l0-10.186c0-1.287-0.968-2.255-2.2-2.255z" />
+    </group>
+    <group android:translateX="19.1988" android:translateY="7.2374">
+        <path android:fillColor="#070D13" android:pathData="M5.35319 2.84965l-2.981-2.53c-0.594-0.484-1.485-0.407-2.024 0.154-0.517 0.583-0.44 1.408 0.11 1.936l1.485 1.441-1.485 1.397c-0.572 0.528-0.594 1.364-0.044 1.958 0.55 0.572 1.386 0.572 1.98 0.088l3.014-2.519c0.627-0.528 0.583-1.408-0.055-1.925z" />
+    </group>
+</vector>

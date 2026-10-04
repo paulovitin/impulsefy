@@ -45,6 +45,9 @@ struct State {
     loading: bool,
     title: String,
     artist: String,
+    album: String,
+    shuffle: bool,
+    repeat: u8,
     uri: String,
     duration_ms: u32,
     position_ms: u32,
@@ -71,12 +74,22 @@ enum Command {
     },
     #[serde(skip)]
     Catalog {
+        method: String,
         path: String,
+        body: serde_json::Value,
         reply: std::sync::mpsc::Sender<serde_json::Value>,
     },
     Load {
         uris: Vec<String>,
         index: usize,
+        #[serde(default)]
+        shuffle: bool,
+    },
+    Shuffle {
+        enabled: bool,
+    },
+    Repeat {
+        mode: u8,
     },
     Toggle,
     Play,
@@ -417,6 +430,7 @@ fn queue_request(
     index: usize,
     play: bool,
     position: u32,
+    options: Options,
 ) -> Result<LoadRequest, String> {
     if uris.is_empty() || uris.len() > 2000 || index >= uris.len() {
         return Err("Escolha um item em uma fila de 1 a 2000 faixas".into());
@@ -437,7 +451,7 @@ fn queue_request(
             start_playing: play,
             seek_to: position,
             playing_track: Some(PlayingTrack::Index(index as u32)),
-            context_options: Some(LoadContextOptions::Options(Options::default())),
+            context_options: Some(LoadContextOptions::Options(options)),
         },
     ))
 }
@@ -470,6 +484,7 @@ fn apply_event(state: &mut State, current_request: &mut Option<u64>, event: Play
             if uri != state.uri {
                 state.title.clear();
                 state.artist.clear();
+                state.album.clear();
                 state.cover_url.clear();
                 state.duration_ms = 0;
             }
@@ -501,6 +516,11 @@ fn apply_event(state: &mut State, current_request: &mut Option<u64>, event: Play
             state.title = item.name;
             state.uri = item.uri;
             state.duration_ms = item.duration_ms;
+            state.album = match &item.unique_fields {
+                UniqueFields::Track { album, .. } => album.clone(),
+                UniqueFields::Local { album, .. } => album.clone().unwrap_or_default(),
+                _ => String::new(),
+            };
             state.artist = match &item.unique_fields {
                 UniqueFields::Track { artists, .. } => artists
                     .iter()
@@ -516,6 +536,16 @@ fn apply_event(state: &mut State, current_request: &mut Option<u64>, event: Play
                 .min_by_key(|c| (c.width - 300).abs())
                 .map(|c| c.url.clone())
                 .unwrap_or_default();
+        }
+        PlayerEvent::ShuffleChanged { shuffle } => state.shuffle = shuffle,
+        PlayerEvent::RepeatChanged { context, track } => {
+            state.repeat = if track {
+                2
+            } else if context {
+                1
+            } else {
+                0
+            }
         }
         PlayerEvent::Unavailable { track_id, .. } => {
             // A failed preload carries the current request ID but the NEXT URI.
@@ -565,11 +595,11 @@ async fn run(bridge: Arc<Bridge>, mut commands: mpsc::UnboundedReceiver<Command>
                         }
                         bridge.publish(&state); state.credential = None;
                     }
-                    Command::Catalog { path, reply } => {
+                    Command::Catalog { method, path, body, reply } => {
                         if let Some(active) = &engine {
                             let session = active.session.clone();
                             tokio::spawn(async move {
-                                let result=tokio::time::timeout(Duration::from_secs(30),catalog::read(&session,&path)).await;
+                                let result=tokio::time::timeout(Duration::from_secs(30),catalog::request(&session,&method,&path,&body)).await;
                                 let value=match result {
                                     Ok(Ok(value))=>value,
                                     Ok(Err(message))=>serde_json::json!({"error":message}),
@@ -582,7 +612,7 @@ async fn run(bridge: Arc<Bridge>, mut commands: mpsc::UnboundedReceiver<Command>
                     command => {
                         if let Some(active) = &engine {
                             let result = match command {
-                                Command::Load { uris, index } => queue_request(uris.clone(), index, true, 0).and_then(|request| {
+                                Command::Load { uris, index, shuffle } => queue_request(uris.clone(), index, true, 0, Options { shuffle, repeat: state.repeat == 1, repeat_track: state.repeat == 2 }).and_then(|request| {
                                     active.spirc.activate().and_then(|_| active.spirc.load(request)).map_err(|e| format!("Spotify: {:?}", e.kind))?;
                                     queue = uris; Ok(())
                                 }),
@@ -591,6 +621,8 @@ async fn run(bridge: Arc<Bridge>, mut commands: mpsc::UnboundedReceiver<Command>
                                 Command::Pause => { active.player.pause(); active.spirc.pause().map_err(|e| format!("Não foi possível pausar ({:?})", e.kind)) },
                                 Command::Next => active.spirc.next().map_err(|e| format!("Spotify: {:?}", e.kind)),
                                 Command::Previous => active.spirc.prev().map_err(|e| format!("Spotify: {:?}", e.kind)),
+                                Command::Shuffle { enabled } => active.spirc.shuffle(enabled).map_err(|e| e.to_string()),
+                                Command::Repeat { mode } => active.spirc.repeat(mode == 1).and_then(|_| active.spirc.repeat_track(mode == 2)).map_err(|e| e.to_string()),
                                 Command::Seek { milliseconds } => active.spirc.set_position_ms(milliseconds.min(state.duration_ms)).map_err(|e| e.to_string()),
                                 _ => Ok(()),
                             };
@@ -621,7 +653,7 @@ async fn run(bridge: Arc<Bridge>, mut commands: mpsc::UnboundedReceiver<Command>
                                 if let Ok(json) = serde_json::to_string(&saved) { auth.credential = json.clone(); state.credential = Some(json); }
                                 // Reconnect restores the last locally selected queue paused. Never resume audio unexpectedly.
                                 if let Some(index) = queue.iter().position(|uri| uri == &state.uri) {
-                                    if let Ok(request) = queue_request(queue.clone(), index, false, state.position_ms) {
+                                    if let Ok(request) = queue_request(queue.clone(), index, false, state.position_ms, Options { shuffle: state.shuffle, repeat: state.repeat == 1, repeat_track: state.repeat == 2 }) {
                                         let _ = next.spirc.activate().and_then(|_| next.spirc.load(request));
                                     }
                                 }
@@ -736,13 +768,24 @@ pub extern "system" fn Java_com_impulsefy_NativePlayer_nativeCommand(
 
 // Called only by Java network workers. Never hold the handle lock while waiting.
 #[no_mangle]
-pub extern "system" fn Java_com_impulsefy_NativePlayer_nativeRead(
+pub extern "system" fn Java_com_impulsefy_NativePlayer_nativeRequest(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
+    method: JString,
     path: JString,
+    body: JString,
 ) -> jstring {
     let result = (|| -> Result<String, String> {
+        let method: String = env
+            .get_string(&method)
+            .map_err(|_| "Método inválido")?
+            .into();
+        let body: String = env.get_string(&body).map_err(|_| "Dados inválidos")?.into();
+        if body.len() > 16_384 {
+            return Err("Dados inválidos".into());
+        }
+        let body = serde_json::from_str(&body).map_err(|_| "Dados inválidos")?;
         let path: String = env
             .get_string(&path)
             .map_err(|_| "Caminho inválido")?
@@ -759,7 +802,12 @@ pub extern "system" fn Java_com_impulsefy_NativePlayer_nativeRead(
             .clone();
         let (reply, receive) = std::sync::mpsc::channel();
         commands
-            .send(Command::Catalog { path, reply })
+            .send(Command::Catalog {
+                method,
+                path,
+                body,
+                reply,
+            })
             .map_err(|_| "Player encerrado")?;
         receive
             .recv_timeout(Duration::from_secs(35))
@@ -798,24 +846,71 @@ mod tests {
     const A: &str = "spotify:track:4uLU6hMCjMI75M1A2tKUQC";
     const B: &str = "spotify:track:0VjIjW4GlUZAMYd2vXMi3b";
     #[test]
+    fn playback_modes_roundtrip_through_queue_options_and_player_events() {
+        let request = queue_request(
+            vec![A.into(), B.into()],
+            1,
+            true,
+            0,
+            Options {
+                shuffle: true,
+                repeat: true,
+                repeat_track: false,
+            },
+        )
+        .unwrap();
+        assert!(matches!(&request.context_options,
+            Some(LoadContextOptions::Options(options)) if options.shuffle && options.repeat && !options.repeat_track));
+        let mut state = State::default();
+        let mut current = None;
+        assert!(apply_event(
+            &mut state,
+            &mut current,
+            PlayerEvent::ShuffleChanged { shuffle: true }
+        ));
+        assert!(state.shuffle);
+        for (context, track, expected) in [(false, false, 0), (true, false, 1), (false, true, 2)] {
+            assert!(apply_event(
+                &mut state,
+                &mut current,
+                PlayerEvent::RepeatChanged { context, track }
+            ));
+            assert_eq!(state.repeat, expected);
+        }
+        let legacy = serde_json::from_value::<Command>(
+            serde_json::json!({"command":"load","uris":[A],"index":0}),
+        )
+        .unwrap();
+        assert!(matches!(legacy, Command::Load { shuffle: false, .. }));
+    }
+    #[test]
     fn queue_validates_before_sending_and_retains_selected_offset() {
-        let request = queue_request(vec![A.into(), B.into()], 1, true, 1234).unwrap();
+        let request =
+            queue_request(vec![A.into(), B.into()], 1, true, 1234, Options::default()).unwrap();
         assert!(matches!(
             request.playing_track,
             Some(PlayingTrack::Index(1))
         ));
         assert_eq!(request.seek_to, 1234);
         assert!(request.start_playing);
-        assert!(queue_request(vec![], 0, true, 0).is_err());
-        assert!(queue_request(vec![A.into()], 1, true, 0).is_err());
+        assert!(queue_request(vec![], 0, true, 0, Options::default()).is_err());
+        assert!(queue_request(vec![A.into()], 1, true, 0, Options::default()).is_err());
         assert!(queue_request(
             vec!["spotify:album:4uLU6hMCjMI75M1A2tKUQC".into()],
             0,
             true,
-            0
+            0,
+            Options::default()
         )
         .is_err());
-        assert!(queue_request(vec!["file:///tmp/audio".into()], 0, true, 0).is_err());
+        assert!(queue_request(
+            vec!["file:///tmp/audio".into()],
+            0,
+            true,
+            0,
+            Options::default()
+        )
+        .is_err());
     }
     #[test]
     fn stale_track_events_cannot_change_current_playback() {

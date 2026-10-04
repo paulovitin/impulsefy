@@ -16,13 +16,12 @@ case "$(uname -s)" in
   *) echo 'Build on macOS or Linux with Android NDK 27.2.' >&2; exit 1 ;;
 esac
 toolchain="$ndk_dir/toolchains/llvm/prebuilt/$host_tag/bin"
-if [[ $# -eq 0 ]]; then set -- arm64-v8a armeabi-v7a; fi
+if [[ $# -eq 0 ]]; then set -- arm64-v8a; fi
 for abi in "$@"; do
   case "$abi" in
     arm64-v8a) target=aarch64-linux-android; compiler=aarch64-linux-android23-clang ;;
-    armeabi-v7a) target=armv7-linux-androideabi; compiler=armv7a-linux-androideabi23-clang ;;
     x86_64) target=x86_64-linux-android; compiler=x86_64-linux-android23-clang ;;
-    *) echo "Unsupported ABI: $abi (use arm64-v8a, armeabi-v7a, x86_64)" >&2; exit 1 ;;
+    *) echo "Unsupported ABI: $abi (use arm64-v8a for Haval or x86_64 for emulator tests)" >&2; exit 1 ;;
   esac
   rustup target add "$target"
   cargo_target="$(echo "$target" | tr '[:lower:]-' '[:upper:]_')"

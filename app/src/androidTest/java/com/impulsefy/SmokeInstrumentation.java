@@ -32,6 +32,7 @@ public final class SmokeInstrumentation extends Instrumentation {
         Activity activity = null;
         AuthManager auth = null;
         try {
+            verifyCatalogRows();
             verifyDeviceAuthorization();
             verifySeparatePlaybackGrant();
             System.loadLibrary("impulsefy");
@@ -75,7 +76,10 @@ public final class SmokeInstrumentation extends Instrumentation {
                 require((Boolean) write.invoke(output, (Object) new short[4096]), "recreated AudioTrack rejected PCM");
                 require((Boolean) stop.invoke(output), "recreated AudioTrack did not stop");
             }
-            verifyFocusGainWhileLoading();
+            verifyVolumeAndFocus();
+            android.content.SharedPreferences previewPreferences = getTargetContext().getSharedPreferences("impulsefy_ui", 0);
+            String previousHistory = previewPreferences.getString("search_history", "[]");
+            previewPreferences.edit().putString("search_history", "[\"private-history-must-stay-hidden\"]").commit();
             activity = startActivitySync(new Intent(getTargetContext(), MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("demo", true));
             waitForIdleSync();
@@ -86,13 +90,30 @@ public final class SmokeInstrumentation extends Instrumentation {
             require(visible.get().contains("Buscar"), "search navigation missing");
             runOnMainSync(() -> clickText(screen.getWindow().getDecorView(), "Buscar"));
             awaitText(screen, "Encontre seu som");
+            awaitText(screen, "PARA A ESTRADA");
+            runOnMainSync(() -> {
+                String previewText = text(screen.getWindow().getDecorView());
+                require(previewText.contains("Maya Costa") && previewText.contains("Luna Vale"), "fictional preview identity missing");
+                require(!previewText.contains("private-history-must-stay-hidden"), "preview exposed real search history");
+            });
+            require(previewPreferences.getString("search_history", "").contains("private-history-must-stay-hidden"), "preview replaced the real search history");
+            previewPreferences.edit().putString("search_history", previousHistory).commit();
+            runOnMainSync(() -> clickText(screen.getWindow().getDecorView(), "Rock"));
+            awaitText(screen, "RESULTADOS");
+            runOnMainSync(() -> clickText(screen.getWindow().getDecorView(), "Artistas"));
+            awaitText(screen, "RESULTADOS · 12 ARTISTAS");
             runOnMainSync(() -> clickText(screen.getWindow().getDecorView(), "Biblioteca"));
             awaitText(screen, "Sua biblioteca");
+            runOnMainSync(() -> clickText(screen.getWindow().getDecorView(), "Álbuns"));
+            waitForIdleSync();
+            runOnMainSync(() -> require(find(screen.getWindow().getDecorView(), android.widget.GridView.class) != null, "library filter must keep the cover grid"));
+            runOnMainSync(() -> clickText(screen.getWindow().getDecorView(), "Playlists"));
+            waitForIdleSync();
             runOnMainSync(() -> {
-                android.widget.ListView list = (android.widget.ListView) find(screen.getWindow().getDecorView(), android.widget.ListView.class);
+                android.widget.AbsListView list = (android.widget.AbsListView) find(screen.getWindow().getDecorView(), android.widget.AbsListView.class);
                 list.performItemClick(list.getChildAt(0), 0, 0);
             });
-            awaitText(screen, "Artista de exemplo");
+            awaitText(screen, "Luna Vale");
             runOnMainSync(screen::finish);
             activity = null;
 
@@ -100,18 +121,30 @@ public final class SmokeInstrumentation extends Instrumentation {
             activity = startActivitySync(new Intent(getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             java.lang.reflect.Field authField = MainActivity.class.getDeclaredField("auth");
             authField.setAccessible(true);
-            ((AuthManager) authField.get(activity)).close();
-            authField.set(activity, new AuthManager(getTargetContext(), (method, endpoint, body, type, bearer) -> {
+            AuthManager loginAuth = new AuthManager(getTargetContext(), (method, endpoint, body, type, bearer) -> {
                 if (endpoint.endsWith("/device/authorize")) return deviceResponse();
                 require(body.contains("device_code=private-device-code"), "device code missing in token poll");
                 return new Http.Response(400, "{\"error\":\"access_denied\"}", 0);
-            }));
+            });
             Activity login = activity;
-            runOnMainSync(() -> clickText(login.getWindow().getDecorView(), "Conectar Spotify"));
+            java.lang.reflect.Method showLogin = MainActivity.class.getDeclaredMethod("showLogin");
+            showLogin.setAccessible(true);
+            runOnMainSync(() -> {
+                try {
+                    ((AuthManager) authField.get(login)).close();
+                    authField.set(login, loginAuth);
+                    showLogin.invoke(login);
+                } catch (ReflectiveOperationException e) { throw new AssertionError(e); }
+            });
             awaitText(login, "Gerar outro QR");
+            java.lang.reflect.Field qrField = MainActivity.class.getDeclaredField("qrImage");
+            qrField.setAccessible(true);
+            ImageView qrView = (ImageView) qrField.get(login);
             AtomicReference<Bitmap> rendered = new AtomicReference<>();
             runOnMainSync(() -> {
-                ImageView qr = (ImageView) find(login.getWindow().getDecorView(), ImageView.class);
+                ImageView qr = qrView;
+                require(qr.isShown() && qr.getWidth() >= 160, "automatic pairing QR is hidden or too small");
+                require(text(login.getWindow().getDecorView()).contains("O carro recebe a autorização sozinho"), "pairing instructions missing");
                 Bitmap image = Bitmap.createBitmap(qr.getWidth(), qr.getHeight(), Bitmap.Config.ARGB_8888);
                 qr.draw(new Canvas(image)); rendered.set(image);
             });
@@ -159,6 +192,19 @@ public final class SmokeInstrumentation extends Instrumentation {
             if (auth != null) auth.close();
             if (activity != null) { Activity screen = activity; runOnMainSync(screen::finish); }
         }
+    }
+
+    private static void verifyCatalogRows() throws Exception {
+        java.lang.reflect.Method parse = MainActivity.class.getDeclaredMethod("parseRow", JSONObject.class, String.class); parse.setAccessible(true);
+        String id = "4uLU6hMCjMI75M1A2tKUQC";
+        JSONObject track = new JSONObject().put("uri", "spotify:track:" + id).put("name", "Track").put("album", new JSONObject().put("name", "Album")).put("saved", true);
+        Object row = parse.invoke(null, new JSONObject().put("track", track), "track"); require(row != null, "wrapped liked track rejected");
+        java.lang.reflect.Field album = row.getClass().getDeclaredField("album"); album.setAccessible(true); require("Album".equals(album.get(row)), "album label lost");
+        java.lang.reflect.Field saved = row.getClass().getDeclaredField("saved"); saved.setAccessible(true); require(Boolean.TRUE.equals(saved.get(row)), "saved state lost");
+        require(parse.invoke(null, new JSONObject().put("id", id).put("uri", "spotify:user:owner:playlist:" + id), "playlist") != null, "legacy playlist URI rejected");
+        require(parse.invoke(null, new JSONObject().put("uri", "spotify:artist:" + id).put("name", "Artist"), "artist") != null, "artist search result rejected");
+        require(parse.invoke(null, track.put("is_local", true), "track") == null, "unplayable local track accepted");
+        require(parse.invoke(null, new JSONObject().put("uri", "spotify:track:invalid"), "track") == null, "invalid track accepted");
     }
 
     private void verifySeparatePlaybackGrant() throws Exception {
@@ -244,7 +290,7 @@ public final class SmokeInstrumentation extends Instrumentation {
         }
     }
 
-    private void verifyFocusGainWhileLoading() throws Exception {
+    private void verifyVolumeAndFocus() throws Exception {
         AtomicReference<PlayerService> bound = new AtomicReference<>();
         CountDownLatch ready = new CountDownLatch(1);
         android.content.ServiceConnection connection = new android.content.ServiceConnection() {
@@ -257,25 +303,47 @@ public final class SmokeInstrumentation extends Instrumentation {
         try {
             require(ready.await(10, TimeUnit.SECONDS), "player service bind timed out");
             PlayerService service = bound.get();
+            require(!service.hasCarVolume() && service.getVolumeMax() == 100, "emulator must retain software volume without the optional car library");
             java.lang.reflect.Field playerField = PlayerService.class.getDeclaredField("player");
             java.lang.reflect.Field volumeField = NativePlayer.class.getDeclaredField("volume");
+            java.lang.reflect.Field focusField = NativePlayer.class.getDeclaredField("focusGain");
+            java.lang.reflect.Field mutedField = NativePlayer.class.getDeclaredField("muted");
+            java.lang.reflect.Method start = NativePlayer.class.getDeclaredMethod("startAudio");
             java.lang.reflect.Method publish = PlayerService.class.getDeclaredMethod("publish", JSONObject.class);
-            playerField.setAccessible(true); volumeField.setAccessible(true); publish.setAccessible(true);
+            playerField.setAccessible(true); volumeField.setAccessible(true); focusField.setAccessible(true);
+            mutedField.setAccessible(true); start.setAccessible(true); publish.setAccessible(true);
             try (NativePlayer output = new NativePlayer(getTargetContext(), new NativePlayer.Callback() {
                 public void onState(JSONObject state) { }
                 public boolean requestAudioFocus() { return true; }
                 public void onAudioError(String message) { }
             })) {
                 playerField.set(service, output);
-                runOnMainSync(() -> service.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK));
-                require(volumeField.getFloat(output) == 0.2f, "duck did not reduce output volume");
+                runOnMainSync(() -> {
+                    service.setVolume(40);
+                    service.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK);
+                });
+                require(volumeField.getFloat(output) == 0.4f && focusField.getFloat(output) == 0.2f, "duck must preserve user volume");
+                runOnMainSync(() -> service.setVolume(30));
+                require(volumeField.getFloat(output) == 0.3f && focusField.getFloat(output) == 0.2f, "slider must preserve ducking");
                 JSONObject loading = service.snapshot().put("playing", false).put("loading", true);
                 runOnMainSync(() -> {
                     try { publish.invoke(service, loading); }
                     catch (Exception error) { throw new RuntimeException(error); }
                     service.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_GAIN);
                 });
-                require(volumeField.getFloat(output) == 1f, "focus gain while loading left output ducked");
+                require(volumeField.getFloat(output) == 0.3f && focusField.getFloat(output) == 1f, "focus gain must restore the selected volume while loading");
+                require((Boolean) start.invoke(output), "volume test output failed to start");
+                runOnMainSync(() -> {
+                    service.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT);
+                    service.setVolume(20);
+                    service.onAudioFocusChange(android.media.AudioManager.AUDIOFOCUS_GAIN);
+                });
+                require(mutedField.getBoolean(output), "changing volume or regaining focus must not unmute paused output");
+                require(volumeField.getFloat(output) == 0.2f, "pause must preserve user volume");
+                require((Boolean) start.invoke(output) && !mutedField.getBoolean(output), "resume must unmute the output");
+                require(volumeField.getFloat(output) == 0.2f, "resume must keep the selected volume");
+                require(service.getVolume() == 20 && getTargetContext().getSharedPreferences("impulsefy_playback", 0).getInt("volume", -1) == 20, "volume must be saved for service recreation");
+                runOnMainSync(() -> service.setVolume(100));
             }
         } finally {
             if (bound.get() != null) runOnMainSync(() -> bound.get().logout());

@@ -9,15 +9,14 @@ android {
         applicationId 'com.impulsefy'
         minSdk 23
         targetSdk 28
-        versionCode 1
-        versionName '0.1.0'
-        testInstrumentationRunner 'com.impulsefy.SmokeInstrumentation'
-        def relay = (findProperty('relayUrl') ?: '').toString()
-        buildConfigField 'String', 'RELAY_URL', '"' + relay.replace('\\', '\\\\').replace('"', '\\"') + '"'
+        versionCode = (project.findProperty('appVersionCode') ?: '1').toString().toInteger()
+        versionName = (project.findProperty('appVersionName') ?: '0.1.0').toString()
+        testInstrumentationRunner findProperty('screenshots') == 'true' ? 'com.impulsefy.ScreenshotInstrumentation' : 'com.impulsefy.SmokeInstrumentation'
     }
     buildFeatures { buildConfig true }
     buildTypes {
         release {
+            ndk { abiFilters 'arm64-v8a' }
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

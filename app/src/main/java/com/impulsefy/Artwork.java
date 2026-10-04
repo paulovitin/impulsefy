@@ -50,6 +50,11 @@ final class Artwork implements AutoCloseable {
         if (requestTag.equals(view.getTag())) return;
         view.setTag(requestTag);
         view.setImageDrawable(new Placeholder(seed));
+        if (key.startsWith("demo:")) {
+            try { view.setImageDrawable(new DemoArtwork(Integer.parseInt(key.substring(5)))); }
+            catch (IllegalArgumentException ignored) { }
+            return;
+        }
         if (key.isEmpty() || closed) return;
         Bitmap cached = cache.get(key);
         if (cached != null) { view.setImageBitmap(cached); return; }
@@ -123,15 +128,18 @@ final class Artwork implements AutoCloseable {
     @Override public void close() { closed = true; workers.shutdownNow(); cache.evictAll(); }
 
     static final class Placeholder extends Drawable {
-        private static final int[] COLORS = {0xff203b3e, 0xff423522, 0xff292d47, 0xff25413c};
+        private static final int[] COLORS = {0xffb83f6b, 0xffd9c84a, 0xff3f57b8, 0xffe07a3f, 0xff8e6ac8, 0xff3fb8a2};
+        private static final int[] ENDS = {0xff4c1a2e, 0xff5a5116, 0xff1a2458, 0xff5c2e14, 0xff3b2860, 0xff154d43};
+        private android.graphics.Shader gradient;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final int seed;
         Placeholder(int seed) { this.seed = (seed & 0x7fffffff) % COLORS.length; }
+        @Override protected void onBoundsChange(Rect bounds) { gradient = new android.graphics.LinearGradient(0, 0, Math.max(1, bounds.width()), Math.max(1, bounds.height()), COLORS[seed], ENDS[seed], android.graphics.Shader.TileMode.CLAMP); }
         @Override public void draw(Canvas canvas) {
             Rect bounds = getBounds(); float w = bounds.width(), h = bounds.height();
             canvas.save(); canvas.translate(bounds.left, bounds.top);
-            paint.setStyle(Paint.Style.FILL); paint.setColor(COLORS[seed]);
-            canvas.drawRect(0, 0, w, h, paint); paint.setStyle(Paint.Style.STROKE);
+            paint.setStyle(Paint.Style.FILL); paint.setShader(gradient); paint.setColor(COLORS[seed]);
+            canvas.drawRect(0, 0, w, h, paint); paint.setShader(null); paint.setStyle(Paint.Style.STROKE);
             paint.setColor(0xcceaf2f8); paint.setStrokeWidth(Math.max(1.7f, w / 85));
             paint.setStrokeCap(Paint.Cap.ROUND);
             float s = Math.min(w, h) * .23f, x = w * .5f, y = h * .5f;

@@ -22,7 +22,8 @@ final class NativePlayer implements AutoCloseable {
     private final Callback callback;
     private volatile boolean closed;
     private volatile AudioTrack audio;
-    private volatile float volume = 1f;
+    private float volume = 1f, focusGain = 1f;
+    private boolean muted;
     private long handle;
 
     NativePlayer(Context context, Callback callback) {
@@ -36,10 +37,14 @@ final class NativePlayer implements AutoCloseable {
     }
 
     JSONObject read(String path) throws Exception {
+        return request("GET", path, null);
+    }
+
+    JSONObject request(String method, String path, JSONObject body) throws Exception {
         if (Looper.myLooper() == Looper.getMainLooper()) throw new IllegalStateException("Use o worker de rede.");
         final long current;
         synchronized (this) { if (closed || handle == 0) throw new IllegalStateException("Player encerrado"); current = handle; }
-        JSONObject value = new JSONObject(nativeRead(current, path));
+        JSONObject value = new JSONObject(nativeRequest(current, method, path, body == null ? "{}" : body.toString()));
         if (value.has("error")) throw new Exception(value.getString("error"));
         return value;
     }
@@ -77,7 +82,8 @@ final class NativePlayer implements AutoCloseable {
                 }
                 audio = next;
             }
-            audio.setVolume(volume);
+            muted = false;
+            applyVolume();
             audio.play();
             return true;
         } catch (RuntimeException error) {
@@ -119,16 +125,24 @@ final class NativePlayer implements AutoCloseable {
     }
 
     synchronized void muteOutput() {
-        volume = 1f;
-        if (audio != null) {
-            try { audio.setVolume(0f); } catch (IllegalStateException ignored) { }
-        }
+        muted = true;
+        focusGain = 1f;
+        applyVolume();
     }
 
     synchronized void setVolume(float next) {
         volume = Math.max(0f, Math.min(1f, next));
+        applyVolume();
+    }
+
+    synchronized void setFocusGain(float next) {
+        focusGain = Math.max(0f, Math.min(1f, next));
+        applyVolume();
+    }
+
+    private void applyVolume() {
         if (audio != null) {
-            try { audio.setVolume(volume); } catch (IllegalStateException ignored) { }
+            try { audio.setVolume(muted ? 0f : volume * focusGain); } catch (IllegalStateException ignored) { }
         }
     }
 
@@ -161,6 +175,6 @@ final class NativePlayer implements AutoCloseable {
 
     private static native long nativeCreate(NativePlayer callback, String cacheDir);
     private static native void nativeCommand(long handle, String json);
-    private static native String nativeRead(long handle, String path);
+    private static native String nativeRequest(long handle, String method, String path, String body);
     private static native void nativeDestroy(long handle);
 }

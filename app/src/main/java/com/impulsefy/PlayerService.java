@@ -41,8 +41,11 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
     private JSONObject state = emptyState();
     private Listener listener;
     private String pendingCredential;
+    private JSONArray selectedQueue = new JSONArray();
     private volatile NativePlayer player;
     private AudioManager audioManager;
+    private int volume = 100;
+    private CarVolume carVolume;
     private MediaSession session;
     private boolean foreground;
     private volatile boolean hasFocus;
@@ -60,6 +63,8 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
     @Override public void onCreate() {
         super.onCreate();
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+        volume = Math.max(0, Math.min(100, getSharedPreferences(CHANNEL, MODE_PRIVATE).getInt("volume", 100)));
+        carVolume = CarVolume.create(this);
         wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "impulsefy:playback");
         wakeLock.setReferenceCounted(false);
         if (Build.VERSION.SDK_INT >= 26) {
@@ -129,6 +134,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
                     @Override public boolean requestAudioFocus() { return acquireFocus(); }
                     @Override public void onAudioError(String message) { pause(); error(message); }
                 });
+                player.setVolume(carVolume == null ? volume / 100f : 1f);
                 JSONObject command = command("connect");
                 put(command, "access_token", accessToken == null ? "" : accessToken);
                 put(command, "credential", credentialJson == null ? "" : credentialJson);
@@ -145,30 +151,81 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
     }
 
     public JSONObject read(String path) throws Exception {
+        return request("GET", path, null);
+    }
+
+    public JSONObject request(String method, String path, JSONObject body) throws Exception {
         NativePlayer current = player;
         if (destroyed || current == null) throw new Exception("Conectando ao Spotify. Tente novamente em instantes.");
-        return current.read(path);
+        return current.request(method, path, body);
     }
 
     public void play(List<String> uris, int index) {
+        play(uris, index, false);
+    }
+
+    public void play(List<String> uris, int index, boolean shuffle) {
         JSONArray queue = new JSONArray(uris);
         onMain(() -> {
             if (!acquireFocus()) { error("O áudio está sendo usado. Tente novamente após a chamada."); return; }
-            if (player != null) player.setVolume(1f);
+            if (player != null) player.setFocusGain(1f);
             JSONObject request = command("load");
-            put(request, "uris", queue); put(request, "index", index);
+            put(request, "uris", queue); put(request, "index", index); put(request, "shuffle", shuffle);
             send(request);
         });
+    }
+    public void playItems(JSONArray items, int index, boolean shuffle) {
+        if (items.length() == 0 || items.length() > 2000 || index < 0 || index >= items.length()) return;
+        java.util.ArrayList<String> uris = new java.util.ArrayList<>();
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null || !item.optString("uri").matches("spotify:track:[A-Za-z0-9]{22}")) return;
+            uris.add(item.optString("uri"));
+        }
+        onMain(() -> {
+            try { selectedQueue = new JSONArray(items.toString()); } catch (JSONException ignored) { return; }
+            play(uris, index, shuffle);
+        });
+    }
+    public JSONArray queueItems() {
+        if (hasQueueSelection()) {
+            try { return new JSONArray(selectedQueue.toString()); } catch (JSONException ignored) { }
+        }
+        return new JSONArray();
+    }
+    public boolean hasQueueSelection() {
+        String uri; synchronized (stateLock) { uri = state.optString("uri"); }
+        for (int i = 0; i < selectedQueue.length(); i++) {
+            if (selectedQueue.optJSONObject(i) != null && uri.equals(selectedQueue.optJSONObject(i).optString("uri"))) return true;
+        }
+        return false;
     }
     public void toggle() { onMain(() -> { if (snapshot().optBoolean("playing") || snapshot().optBoolean("loading")) pause(); else resume(); }); }
     public void next() { onMain(() -> send(command("next"))); }
     public void previous() { onMain(() -> send(command("previous"))); }
+    public void shuffle(boolean enabled) { onMain(() -> { JSONObject request = command("shuffle"); put(request, "enabled", enabled); send(request); }); }
+    public void repeat(int mode) { onMain(() -> { JSONObject request = command("repeat"); put(request, "mode", Math.max(0, Math.min(2, mode))); send(request); }); }
     public void seek(int milliseconds) { onMain(() -> { JSONObject request = command("seek"); put(request, "milliseconds", Math.max(0, milliseconds)); send(request); }); }
+
+    public boolean hasCarVolume() { return carVolume != null; }
+    public int getVolumeMax() { return carVolume == null ? 100 : carVolume.max(); }
+    public int getVolume() { return carVolume == null ? volume : carVolume.get(); }
+    public void setVolume(int value) {
+        onMain(() -> {
+            if (carVolume != null) {
+                if (!carVolume.set(value)) android.widget.Toast.makeText(this, "Não foi possível ajustar o volume do carro.", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            volume = Math.max(0, Math.min(100, value));
+            if (player != null) player.setVolume(volume / 100f);
+            getSharedPreferences(CHANNEL, MODE_PRIVATE).edit().putInt("volume", volume).apply();
+        });
+    }
 
     private void resume() {
         onMain(() -> {
             if (!acquireFocus()) { error("O áudio está sendo usado. Tente novamente após a chamada."); return; }
-            if (player != null) player.setVolume(1f);
+            if (player != null) player.setFocusGain(1f);
             send(command("play"));
         });
     }
@@ -179,6 +236,7 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
             if (player != null) { player.close(); player = null; }
             abandonFocus();
             pendingCredential = null;
+            selectedQueue = new JSONArray();
             session.setActive(false);
             publish(emptyState());
             stopForeground(true); foreground = false;
@@ -210,8 +268,8 @@ public final class PlayerService extends Service implements AudioManager.OnAudio
 
     @Override public void onAudioFocusChange(int change) {
         onMain(() -> {
-            if (change == AudioManager.AUDIOFOCUS_GAIN) { hasFocus = true; if (player != null) player.setVolume(1f); }
-            else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) { if (player != null) player.setVolume(0.2f); }
+            if (change == AudioManager.AUDIOFOCUS_GAIN) { hasFocus = true; if (player != null) player.setFocusGain(1f); }
+            else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) { if (player != null) player.setFocusGain(0.2f); }
             else { hasFocus = false; pause(); }
         });
     }

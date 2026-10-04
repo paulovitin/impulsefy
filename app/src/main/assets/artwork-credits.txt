@@ -1,6 +1,16 @@
-Design reference: impulsefy.pen (user supplied).
+Design reference: design/impulsefy.pen (user supplied).
+Login road photograph (QhCG9): Leo_Visions — https://unsplash.com/@leo_visions_
+https://images.unsplash.com/photo-1675186258567-30663a4763f1
 Coastal road photograph: Datingscout — https://unsplash.com/@datingscout
 https://images.unsplash.com/photo-1649872647698-4b80ebcf2958
 Preview cover photograph: damien dufour — https://unsplash.com/@damiendufourphotographie
 https://images.unsplash.com/photo-1676051303448-9a2664ac4955
 Inter typeface: https://github.com/google/fonts/tree/main/ofl/inter (license: fonts/OFL.txt).
+
+Home banner (Pencil node T8o8sR): Jonathan Wuyts / Unsplash
+https://unsplash.com/@photosjona
+https://images.unsplash.com/photo-1762461554982-c852855df503
+
+Fictional preview album covers: original geometric illustrations for Impulsefy,
+rendered locally by DemoArtwork.java. No Spotify artwork or user images are used
+for these covers. Names, artists and playlists in the preview are fictional.
