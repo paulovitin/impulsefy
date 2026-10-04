@@ -12,5 +12,5 @@ mkdir -p artifacts
 adb -s "$device" install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s "$device" install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 adb -s "$device" shell am instrument -w com.impulsefy.test/com.impulsefy.SmokeInstrumentation | tee artifacts/android-smoke.txt
-rg -q '^PASS:' artifacts/android-smoke.txt
+grep -q '^PASS:' artifacts/android-smoke.txt
 adb -s "$device" exec-out run-as com.impulsefy cat files/qr-smoke.png > artifacts/qr-smoke.png
